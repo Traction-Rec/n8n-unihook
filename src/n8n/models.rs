@@ -153,20 +153,10 @@ pub fn parse_slack_trigger(
     // n8n's Slack Trigger webhook path is /{endpoint}/{webhookId}/webhook
     let webhook_id = node.webhook_id.as_ref()?;
     let base = base_url.trim_end_matches('/');
-    
-    let webhook_url = format!(
-        "{}/{}/{}/webhook",
-        base,
-        endpoints.production,
-        webhook_id
-    );
-    
-    let test_webhook_url = format!(
-        "{}/{}/{}/webhook",
-        base,
-        endpoints.test,
-        webhook_id
-    );
+
+    let webhook_url = format!("{}/{}/{}/webhook", base, endpoints.production, webhook_id);
+
+    let test_webhook_url = format!("{}/{}/{}/webhook", base, endpoints.test, webhook_id);
 
     Some(SlackTriggerConfig {
         workflow_id: workflow.id.clone(),
@@ -257,7 +247,8 @@ mod tests {
         let workflow = create_workflow("wf1", "My Workflow", vec![node.clone()]);
         let endpoints = default_endpoints();
 
-        let config = parse_slack_trigger(&workflow, &node, "http://localhost:5678", &endpoints).unwrap();
+        let config =
+            parse_slack_trigger(&workflow, &node, "http://localhost:5678", &endpoints).unwrap();
 
         assert_eq!(config.workflow_id, "wf1");
         assert_eq!(config.workflow_name, "My Workflow");
@@ -308,7 +299,8 @@ mod tests {
         let workflow = create_workflow("wf3", "Workspace Workflow", vec![node.clone()]);
         let endpoints = default_endpoints();
 
-        let config = parse_slack_trigger(&workflow, &node, "http://localhost:5678", &endpoints).unwrap();
+        let config =
+            parse_slack_trigger(&workflow, &node, "http://localhost:5678", &endpoints).unwrap();
 
         assert_eq!(config.event_type, "reaction_added");
         assert!(config.watch_whole_workspace);
@@ -348,7 +340,8 @@ mod tests {
         let workflow = create_workflow("wf1", "Workflow", vec![node.clone()]);
         let endpoints = default_endpoints();
 
-        let config = parse_slack_trigger(&workflow, &node, "http://localhost:5678", &endpoints).unwrap();
+        let config =
+            parse_slack_trigger(&workflow, &node, "http://localhost:5678", &endpoints).unwrap();
 
         assert_eq!(config.event_type, "any_event");
     }
@@ -398,7 +391,8 @@ mod tests {
         let workflow = create_workflow("wf1", "Workflow", vec![node.clone()]);
         let endpoints = default_endpoints();
 
-        let config = parse_slack_trigger(&workflow, &node, "http://localhost:5678/", &endpoints).unwrap();
+        let config =
+            parse_slack_trigger(&workflow, &node, "http://localhost:5678/", &endpoints).unwrap();
 
         assert_eq!(
             config.webhook_url,
@@ -419,7 +413,8 @@ mod tests {
             test: "custom-test".to_string(),
         };
 
-        let config = parse_slack_trigger(&workflow, &node, "http://localhost:5678", &endpoints).unwrap();
+        let config =
+            parse_slack_trigger(&workflow, &node, "http://localhost:5678", &endpoints).unwrap();
 
         assert_eq!(
             config.webhook_url,

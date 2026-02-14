@@ -33,7 +33,9 @@ async fn main() {
             eprintln!("\nRequired environment variables:");
             eprintln!("  N8N_API_KEY     - Your n8n API key");
             eprintln!("\nOptional environment variables:");
-            eprintln!("  N8N_API_URL              - n8n instance URL (default: http://localhost:5678)");
+            eprintln!(
+                "  N8N_API_URL              - n8n instance URL (default: http://localhost:5678)"
+            );
             eprintln!("  LISTEN_ADDR              - Address to bind (default: 0.0.0.0:3000)");
             eprintln!("  REFRESH_INTERVAL_SECS    - Trigger refresh interval (default: 60)");
             eprintln!("  N8N_ENDPOINT_WEBHOOK     - Production webhook path (default: webhook)");

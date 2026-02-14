@@ -110,7 +110,7 @@ impl Router {
         // Forward to all matching triggers concurrently
         // Each trigger gets the event sent to both production and test webhook URLs
         let mut forwards = Vec::new();
-        
+
         for trigger in &matching_triggers {
             let client = self.n8n_client.clone();
             let workflow_name = trigger.workflow_name.clone();
@@ -122,7 +122,14 @@ impl Router {
             let prod_name = workflow_name.clone();
             let prod_payload = payload.clone();
             forwards.push(tokio::spawn(async move {
-                Self::forward_to_webhook(&prod_client, &prod_url, &prod_name, "production", &prod_payload).await
+                Self::forward_to_webhook(
+                    &prod_client,
+                    &prod_url,
+                    &prod_name,
+                    "production",
+                    &prod_payload,
+                )
+                .await
             }));
 
             // Test webhook
@@ -131,7 +138,8 @@ impl Router {
             let test_name = workflow_name.clone();
             let test_payload = payload.clone();
             forwards.push(tokio::spawn(async move {
-                Self::forward_to_webhook(&test_client, &test_url, &test_name, "test", &test_payload).await
+                Self::forward_to_webhook(&test_client, &test_url, &test_name, "test", &test_payload)
+                    .await
             }));
         }
 

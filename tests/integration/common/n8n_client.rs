@@ -29,7 +29,7 @@ impl N8nTestClient {
     /// Check if n8n needs initial owner setup
     pub async fn needs_setup(&self) -> Result<bool, N8nTestError> {
         let url = format!("{}/rest/settings", self.base_url);
-        
+
         let response = self
             .client
             .get(&url)
@@ -38,7 +38,9 @@ impl N8nTestClient {
             .map_err(|e| N8nTestError::RequestFailed(e.to_string()))?;
 
         if !response.status().is_success() {
-            return Err(N8nTestError::RequestFailed("Failed to get settings".to_string()));
+            return Err(N8nTestError::RequestFailed(
+                "Failed to get settings".to_string(),
+            ));
         }
 
         let settings: SettingsResponse = response
@@ -50,9 +52,15 @@ impl N8nTestClient {
     }
 
     /// Complete the initial owner setup for n8n
-    pub async fn setup_owner(&self, email: &str, password: &str, first_name: &str, last_name: &str) -> Result<SetupResponse, N8nTestError> {
+    pub async fn setup_owner(
+        &self,
+        email: &str,
+        password: &str,
+        first_name: &str,
+        last_name: &str,
+    ) -> Result<SetupResponse, N8nTestError> {
         let url = format!("{}/rest/owner/setup", self.base_url);
-        
+
         let payload = serde_json::json!({
             "email": email,
             "password": password,
@@ -86,7 +94,11 @@ impl N8nTestClient {
     }
 
     /// Create an API key using cookie-based authentication
-    pub async fn create_api_key(&self, email: &str, password: &str) -> Result<String, N8nTestError> {
+    pub async fn create_api_key(
+        &self,
+        email: &str,
+        password: &str,
+    ) -> Result<String, N8nTestError> {
         // Create a client with cookie store enabled
         let client = Client::builder()
             .cookie_store(true)
@@ -95,7 +107,7 @@ impl N8nTestClient {
 
         // Login first
         let login_url = format!("{}/rest/login", self.base_url);
-        
+
         let login_payload = serde_json::json!({
             "emailOrLdapLoginId": email,
             "password": password
@@ -119,18 +131,19 @@ impl N8nTestClient {
 
         // Create API key with required scopes and expiration (1 year from now)
         let api_key_url = format!("{}/rest/api-keys", self.base_url);
-        
+
         // Calculate expiration timestamp (1 year from now in milliseconds)
         let expires_at = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
-            .as_millis() as i64 + (365 * 24 * 60 * 60 * 1000);
-        
+            .as_millis() as i64
+            + (365 * 24 * 60 * 60 * 1000);
+
         let api_key_payload = serde_json::json!({
             "label": "integration-test-key",
             "scopes": [
                 "workflow:create",
-                "workflow:delete", 
+                "workflow:delete",
                 "workflow:read",
                 "workflow:update",
                 "workflow:list",
@@ -164,11 +177,14 @@ impl N8nTestClient {
     }
 
     /// Import a workflow from JSON
-    pub async fn import_workflow(&self, workflow_json: &Value) -> Result<WorkflowResponse, N8nTestError> {
+    pub async fn import_workflow(
+        &self,
+        workflow_json: &Value,
+    ) -> Result<WorkflowResponse, N8nTestError> {
         let url = format!("{}/api/v1/workflows", self.base_url);
 
         let mut request = self.client.post(&url);
-        
+
         if let Some(ref api_key) = self.api_key {
             request = request.header("X-N8N-API-KEY", api_key);
         }
@@ -196,19 +212,24 @@ impl N8nTestClient {
 
     /// Attach Slack API credential to all Slack Trigger nodes in a workflow
     /// This is required for n8n to properly register the webhook for the trigger
-    pub async fn attach_slack_credential(&self, workflow_id: &str, credential_id: &str) -> Result<(), N8nTestError> {
+    pub async fn attach_slack_credential(
+        &self,
+        workflow_id: &str,
+        credential_id: &str,
+    ) -> Result<(), N8nTestError> {
         // First, get the current workflow
         let workflow = self.get_workflow(workflow_id).await?;
-        
+
         // Find and update Slack Trigger nodes with the credential
-        let nodes_value = workflow.get("nodes")
+        let nodes_value = workflow
+            .get("nodes")
             .ok_or_else(|| N8nTestError::ParseError("No nodes field in workflow".to_string()))?;
-        
+
         let mut nodes: Vec<serde_json::Value> = serde_json::from_value(nodes_value.clone())
             .map_err(|e| N8nTestError::ParseError(format!("Failed to parse nodes: {}", e)))?;
-        
+
         let mut updated = false;
-        
+
         for node in &mut nodes {
             if node.get("type").and_then(|t| t.as_str()) == Some("n8n-nodes-base.slackTrigger") {
                 // Add credentials to this node
@@ -218,16 +239,18 @@ impl N8nTestClient {
                         "name": "Test Slack API"
                     }
                 });
-                node.as_object_mut().unwrap().insert("credentials".to_string(), credentials);
+                node.as_object_mut()
+                    .unwrap()
+                    .insert("credentials".to_string(), credentials);
                 updated = true;
             }
         }
-        
+
         if !updated {
             // No Slack Trigger nodes found, nothing to do
             return Ok(());
         }
-        
+
         // Build update payload with only the required fields for PUT
         let update_payload = serde_json::json!({
             "name": workflow.get("name").cloned().unwrap_or(serde_json::json!("Workflow")),
@@ -235,27 +258,27 @@ impl N8nTestClient {
             "connections": workflow.get("connections").cloned().unwrap_or(serde_json::json!({})),
             "settings": workflow.get("settings").cloned().unwrap_or(serde_json::json!({}))
         });
-        
+
         self.update_workflow(workflow_id, &update_payload).await?;
-        
+
         Ok(())
     }
-    
+
     /// Get a workflow by ID
     pub async fn get_workflow(&self, workflow_id: &str) -> Result<serde_json::Value, N8nTestError> {
         let url = format!("{}/api/v1/workflows/{}", self.base_url, workflow_id);
-        
+
         let mut request = self.client.get(&url);
-        
+
         if let Some(ref api_key) = self.api_key {
             request = request.header("X-N8N-API-KEY", api_key);
         }
-        
+
         let response = request
             .send()
             .await
             .map_err(|e| N8nTestError::RequestFailed(e.to_string()))?;
-        
+
         if !response.status().is_success() {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
@@ -264,29 +287,33 @@ impl N8nTestClient {
                 body,
             });
         }
-        
+
         response
             .json()
             .await
             .map_err(|e| N8nTestError::ParseError(e.to_string()))
     }
-    
+
     /// Update a workflow
-    pub async fn update_workflow(&self, workflow_id: &str, update_data: &serde_json::Value) -> Result<serde_json::Value, N8nTestError> {
+    pub async fn update_workflow(
+        &self,
+        workflow_id: &str,
+        update_data: &serde_json::Value,
+    ) -> Result<serde_json::Value, N8nTestError> {
         let url = format!("{}/api/v1/workflows/{}", self.base_url, workflow_id);
-        
+
         let mut request = self.client.put(&url);
-        
+
         if let Some(ref api_key) = self.api_key {
             request = request.header("X-N8N-API-KEY", api_key);
         }
-        
+
         let response = request
             .json(update_data)
             .send()
             .await
             .map_err(|e| N8nTestError::RequestFailed(e.to_string()))?;
-        
+
         if !response.status().is_success() {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
@@ -295,7 +322,7 @@ impl N8nTestClient {
                 body,
             });
         }
-        
+
         response
             .json()
             .await
@@ -303,11 +330,17 @@ impl N8nTestClient {
     }
 
     /// Activate a workflow
-    pub async fn activate_workflow(&self, workflow_id: &str) -> Result<WorkflowResponse, N8nTestError> {
-        let url = format!("{}/api/v1/workflows/{}/activate", self.base_url, workflow_id);
+    pub async fn activate_workflow(
+        &self,
+        workflow_id: &str,
+    ) -> Result<WorkflowResponse, N8nTestError> {
+        let url = format!(
+            "{}/api/v1/workflows/{}/activate",
+            self.base_url, workflow_id
+        );
 
         let mut request = self.client.post(&url);
-        
+
         if let Some(ref api_key) = self.api_key {
             request = request.header("X-N8N-API-KEY", api_key);
         }
@@ -333,11 +366,17 @@ impl N8nTestClient {
     }
 
     /// Deactivate a workflow
-    pub async fn deactivate_workflow(&self, workflow_id: &str) -> Result<WorkflowResponse, N8nTestError> {
-        let url = format!("{}/api/v1/workflows/{}/deactivate", self.base_url, workflow_id);
+    pub async fn deactivate_workflow(
+        &self,
+        workflow_id: &str,
+    ) -> Result<WorkflowResponse, N8nTestError> {
+        let url = format!(
+            "{}/api/v1/workflows/{}/deactivate",
+            self.base_url, workflow_id
+        );
 
         let mut request = self.client.post(&url);
-        
+
         if let Some(ref api_key) = self.api_key {
             request = request.header("X-N8N-API-KEY", api_key);
         }
@@ -367,7 +406,7 @@ impl N8nTestClient {
         let url = format!("{}/api/v1/workflows/{}", self.base_url, workflow_id);
 
         let mut request = self.client.delete(&url);
-        
+
         if let Some(ref api_key) = self.api_key {
             request = request.header("X-N8N-API-KEY", api_key);
         }
@@ -394,7 +433,7 @@ impl N8nTestClient {
         let url = format!("{}/api/v1/workflows", self.base_url);
 
         let mut request = self.client.get(&url);
-        
+
         if let Some(ref api_key) = self.api_key {
             request = request.header("X-N8N-API-KEY", api_key);
         }
@@ -420,15 +459,18 @@ impl N8nTestClient {
     }
 
     /// Get workflow executions (for verifying event delivery)
-    pub async fn get_executions(&self, workflow_id: Option<&str>) -> Result<ExecutionsResponse, N8nTestError> {
+    pub async fn get_executions(
+        &self,
+        workflow_id: Option<&str>,
+    ) -> Result<ExecutionsResponse, N8nTestError> {
         let mut url = format!("{}/api/v1/executions", self.base_url);
-        
+
         if let Some(wf_id) = workflow_id {
             url.push_str(&format!("?workflowId={}", wf_id));
         }
 
         let mut request = self.client.get(&url);
-        
+
         if let Some(ref api_key) = self.api_key {
             request = request.header("X-N8N-API-KEY", api_key);
         }
@@ -456,7 +498,7 @@ impl N8nTestClient {
     /// Clean up all test workflows
     pub async fn cleanup_all_workflows(&self) -> Result<(), N8nTestError> {
         let workflows = self.get_workflows().await?;
-        
+
         for workflow in workflows.data {
             // Deactivate first if active
             if workflow.active {
@@ -464,7 +506,7 @@ impl N8nTestClient {
             }
             self.delete_workflow(&workflow.id).await?;
         }
-        
+
         Ok(())
     }
 }

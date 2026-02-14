@@ -5,7 +5,9 @@
 pub mod docker;
 pub mod n8n_client;
 
-pub use docker::{DockerConfig, start_docker_env, stop_docker_env, wait_for_services, services_running};
+pub use docker::{
+    DockerConfig, services_running, start_docker_env, stop_docker_env, wait_for_services,
+};
 pub use n8n_client::{N8nTestClient, WorkflowResponse};
 
 use serde_json::Value;
@@ -18,7 +20,7 @@ pub const UNIHOOK_URL: &str = "http://localhost:3000";
 
 /// Test user credentials for n8n setup
 pub const TEST_EMAIL: &str = "test@example.com";
-pub const TEST_PASSWORD: &str = "TestPassword123";  // Must contain uppercase
+pub const TEST_PASSWORD: &str = "TestPassword123"; // Must contain uppercase
 pub const TEST_FIRST_NAME: &str = "Test";
 pub const TEST_LAST_NAME: &str = "User";
 
@@ -29,7 +31,7 @@ pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(60);
 static API_KEY: OnceLock<String> = OnceLock::new();
 
 /// Get the API key from environment or create one if needed
-/// 
+///
 /// The test script should set TEST_N8N_API_KEY environment variable
 pub async fn get_or_create_api_key() -> Result<String, TestEnvError> {
     // Return cached key if available
@@ -45,30 +47,34 @@ pub async fn get_or_create_api_key() -> Result<String, TestEnvError> {
 
     // Otherwise, set up n8n and create an API key
     let client = N8nTestClient::new(N8N_URL);
-    
+
     // Check if n8n needs initial setup
-    let needs_setup = client.needs_setup().await
+    let needs_setup = client
+        .needs_setup()
+        .await
         .map_err(|e| TestEnvError::N8nError(format!("Failed to check n8n setup status: {}", e)))?;
-    
+
     if needs_setup {
         println!("Setting up n8n owner account...");
-        client.setup_owner(TEST_EMAIL, TEST_PASSWORD, TEST_FIRST_NAME, TEST_LAST_NAME)
+        client
+            .setup_owner(TEST_EMAIL, TEST_PASSWORD, TEST_FIRST_NAME, TEST_LAST_NAME)
             .await
             .map_err(|e| TestEnvError::N8nError(format!("Failed to setup n8n owner: {}", e)))?;
         println!("Owner account created successfully");
     }
-    
+
     // Create an API key with a unique label
     println!("Creating API key...");
-    let api_key = client.create_api_key(TEST_EMAIL, TEST_PASSWORD)
+    let api_key = client
+        .create_api_key(TEST_EMAIL, TEST_PASSWORD)
         .await
         .map_err(|e| TestEnvError::N8nError(format!("Failed to create API key: {}", e)))?;
-    
+
     println!("API key created successfully");
-    
+
     // Store for future use (ignore error if already set by another thread)
     let _ = API_KEY.set(api_key.clone());
-    
+
     Ok(api_key)
 }
 
@@ -87,16 +93,16 @@ impl TestEnvironment {
     /// If `manage_docker` is true, will start/stop Docker automatically
     pub async fn new(manage_docker: bool) -> Result<Self, TestEnvError> {
         let docker_config = DockerConfig::default();
-        
+
         // Check if services are already running
         let already_running = services_running(N8N_URL, UNIHOOK_URL).await;
-        
+
         let should_manage = manage_docker && !already_running;
-        
+
         if should_manage {
             start_docker_env(&docker_config)
                 .map_err(|e| TestEnvError::DockerError(e.to_string()))?;
-            
+
             wait_for_services(N8N_URL, UNIHOOK_URL, DEFAULT_TIMEOUT)
                 .await
                 .map_err(|e| TestEnvError::DockerError(e.to_string()))?;
@@ -105,19 +111,22 @@ impl TestEnvironment {
                 "Services are not running. Start them with: docker compose -f docker-compose.test.yml up -d".to_string()
             ));
         }
-        
+
         // Get or create API key for n8n
         let api_key = get_or_create_api_key().await?;
-        
+
         // Get Slack credential ID from environment (created by test script)
         let slack_credential_id = std::env::var("SLACK_CREDENTIAL_ID").ok();
         if slack_credential_id.is_some() {
-            println!("Using Slack credential ID: {}", slack_credential_id.as_ref().unwrap());
+            println!(
+                "Using Slack credential ID: {}",
+                slack_credential_id.as_ref().unwrap()
+            );
         }
-        
+
         let n8n_client = N8nTestClient::new(N8N_URL).with_api_key(api_key);
         let http_client = reqwest::Client::new();
-        
+
         Ok(Self {
             n8n_client,
             http_client,
@@ -126,34 +135,41 @@ impl TestEnvironment {
             slack_credential_id,
         })
     }
-    
+
     /// Import and activate a test workflow
     /// If a Slack credential ID is available, it will be attached to Slack Trigger nodes
-    pub async fn setup_workflow(&self, workflow_json: &Value) -> Result<WorkflowResponse, TestEnvError> {
-        let workflow = self.n8n_client
+    pub async fn setup_workflow(
+        &self,
+        workflow_json: &Value,
+    ) -> Result<WorkflowResponse, TestEnvError> {
+        let workflow = self
+            .n8n_client
             .import_workflow(workflow_json)
             .await
             .map_err(|e| TestEnvError::N8nError(e.to_string()))?;
-        
+
         // If we have a Slack credential, attach it to the workflow's Slack Trigger nodes
         if let Some(ref cred_id) = self.slack_credential_id {
             self.n8n_client
                 .attach_slack_credential(&workflow.id, cred_id)
                 .await
-                .map_err(|e| TestEnvError::N8nError(format!("Failed to attach Slack credential: {}", e)))?;
+                .map_err(|e| {
+                    TestEnvError::N8nError(format!("Failed to attach Slack credential: {}", e))
+                })?;
         }
-        
-        let activated = self.n8n_client
+
+        let activated = self
+            .n8n_client
             .activate_workflow(&workflow.id)
             .await
             .map_err(|e| TestEnvError::N8nError(e.to_string()))?;
-        
+
         // Give slack-unihook time to refresh triggers
         tokio::time::sleep(Duration::from_secs(6)).await;
-        
+
         Ok(activated)
     }
-    
+
     /// Clean up a specific workflow
     pub async fn cleanup_workflow(&self, workflow_id: &str) -> Result<(), TestEnvError> {
         let _ = self.n8n_client.deactivate_workflow(workflow_id).await;
@@ -163,7 +179,7 @@ impl TestEnvironment {
             .map_err(|e| TestEnvError::N8nError(e.to_string()))?;
         Ok(())
     }
-    
+
     /// Clean up all workflows
     pub async fn cleanup_all(&self) -> Result<(), TestEnvError> {
         self.n8n_client
@@ -172,9 +188,12 @@ impl TestEnvironment {
             .map_err(|e| TestEnvError::N8nError(e.to_string()))?;
         Ok(())
     }
-    
+
     /// Send a Slack event to slack-unihook
-    pub async fn send_slack_event(&self, payload: &Value) -> Result<reqwest::Response, TestEnvError> {
+    pub async fn send_slack_event(
+        &self,
+        payload: &Value,
+    ) -> Result<reqwest::Response, TestEnvError> {
         self.http_client
             .post(format!("{}/slack/events", UNIHOOK_URL))
             .json(payload)
@@ -182,15 +201,16 @@ impl TestEnvironment {
             .await
             .map_err(|e| TestEnvError::RequestError(e.to_string()))
     }
-    
+
     /// Get health status from slack-unihook
     pub async fn get_health(&self) -> Result<Value, TestEnvError> {
-        let response = self.http_client
+        let response = self
+            .http_client
             .get(format!("{}/health", UNIHOOK_URL))
             .send()
             .await
             .map_err(|e| TestEnvError::RequestError(e.to_string()))?;
-        
+
         response
             .json()
             .await

@@ -1,8 +1,8 @@
 //! Integration tests for event routing functionality
 
 use crate::common::{
-    create_app_mention_payload, create_message_event_payload, create_reaction_event_payload,
-    create_url_verification_payload, TestEnvironment, UNIHOOK_URL,
+    TestEnvironment, UNIHOOK_URL, create_app_mention_payload, create_message_event_payload,
+    create_reaction_event_payload, create_url_verification_payload,
 };
 use serde_json::json;
 use std::time::Duration;
@@ -17,25 +17,30 @@ fn load_workflow(name: &str) -> serde_json::Value {
     );
     let content = std::fs::read_to_string(&path)
         .unwrap_or_else(|_| panic!("Failed to read workflow fixture: {}", path));
-    let mut workflow: serde_json::Value = serde_json::from_str(&content).expect("Failed to parse workflow JSON");
-    
+    let mut workflow: serde_json::Value =
+        serde_json::from_str(&content).expect("Failed to parse workflow JSON");
+
     // Generate a unique suffix for webhook IDs
-    let unique_id = format!("{:x}", std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_nanos());
-    
+    let unique_id = format!(
+        "{:x}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    );
+
     // Add webhookId to any Slack Trigger nodes
     if let Some(nodes) = workflow.get_mut("nodes").and_then(|n| n.as_array_mut()) {
         for node in nodes {
             if let Some(node_type) = node.get("type").and_then(|t| t.as_str()) {
                 if node_type == "n8n-nodes-base.slackTrigger" {
-                    node["webhookId"] = serde_json::Value::String(format!("test-webhook-{}-{}", name, unique_id));
+                    node["webhookId"] =
+                        serde_json::Value::String(format!("test-webhook-{}-{}", name, unique_id));
                 }
             }
         }
     }
-    
+
     workflow
 }
 
@@ -241,7 +246,10 @@ async fn test_any_event_trigger_receives_message() {
 
     // Verify execution occurred
     let execution_occurred = wait_for_execution(&env, &created.id, initial_count + 1).await;
-    assert!(execution_occurred, "Expected any_event workflow to execute on message");
+    assert!(
+        execution_occurred,
+        "Expected any_event workflow to execute on message"
+    );
 
     // Cleanup
     env.cleanup_workflow(&created.id)
@@ -275,7 +283,10 @@ async fn test_any_event_trigger_receives_reaction() {
 
     // Verify execution occurred
     let execution_occurred = wait_for_execution(&env, &created.id, initial_count + 1).await;
-    assert!(execution_occurred, "Expected any_event workflow to execute on reaction");
+    assert!(
+        execution_occurred,
+        "Expected any_event workflow to execute on reaction"
+    );
 
     // Cleanup
     env.cleanup_workflow(&created.id)
@@ -309,7 +320,10 @@ async fn test_any_event_trigger_receives_app_mention() {
 
     // Verify execution occurred
     let execution_occurred = wait_for_execution(&env, &created.id, initial_count + 1).await;
-    assert!(execution_occurred, "Expected any_event workflow to execute on app_mention");
+    assert!(
+        execution_occurred,
+        "Expected any_event workflow to execute on app_mention"
+    );
 
     // Cleanup
     env.cleanup_workflow(&created.id)
@@ -326,7 +340,9 @@ async fn test_channel_specific_trigger_loaded() {
         .expect("Failed to create test environment");
 
     // Clean up any workflows from previous tests and wait for refresh
-    env.cleanup_all().await.expect("Failed to cleanup all workflows");
+    env.cleanup_all()
+        .await
+        .expect("Failed to cleanup all workflows");
     tokio::time::sleep(Duration::from_secs(6)).await;
 
     // Get initial trigger count (should be 0 after cleanup)
@@ -346,7 +362,7 @@ async fn test_channel_specific_trigger_loaded() {
     // Check that trigger count increased by 1
     let health_after = env.get_health().await.expect("Failed to get health");
     let count_after = health_after["triggers_loaded"].as_i64().unwrap_or(0);
-    
+
     assert_eq!(
         count_after - count_before,
         1,

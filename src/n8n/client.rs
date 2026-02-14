@@ -1,5 +1,7 @@
 use crate::config::Config;
-use crate::n8n::models::{SlackTriggerConfig, WebhookEndpoints, WorkflowsResponse, parse_slack_trigger};
+use crate::n8n::models::{
+    SlackTriggerConfig, WebhookEndpoints, WorkflowsResponse, parse_slack_trigger,
+};
 use reqwest::Client;
 use std::sync::Arc;
 use tracing::{debug, error, info, warn};
@@ -18,7 +20,11 @@ impl N8nClient {
             production: config.n8n_endpoint_webhook.clone(),
             test: config.n8n_endpoint_webhook_test.clone(),
         };
-        Self { client, config, webhook_endpoints }
+        Self {
+            client,
+            config,
+            webhook_endpoints,
+        }
     }
 
     /// Fetch all active workflows and extract Slack trigger configurations
@@ -42,9 +48,12 @@ impl N8nClient {
 
                 // Look for Slack Trigger nodes in the workflow
                 for node in &workflow.nodes {
-                    if let Some(trigger) =
-                        parse_slack_trigger(&workflow, node, &self.config.n8n_api_url, &self.webhook_endpoints)
-                    {
+                    if let Some(trigger) = parse_slack_trigger(
+                        &workflow,
+                        node,
+                        &self.config.n8n_api_url,
+                        &self.webhook_endpoints,
+                    ) {
                         info!(
                             workflow_id = %trigger.workflow_id,
                             workflow_name = %trigger.workflow_name,

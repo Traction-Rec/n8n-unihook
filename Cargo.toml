@@ -11,7 +11,7 @@ axum = "0.8"
 tokio = { version = "1", features = ["full"] }
 
 # HTTP client for forwarding requests to n8n
-reqwest = { version = "0.12", features = ["json"] }
+reqwest = { version = "0.13", features = ["json"] }
 
 # Serialization
 serde = { version = "1", features = ["derive"] }
@@ -35,7 +35,7 @@ thiserror = "2"
 # For integration tests
 tokio-test = "0.4"
 # Reqwest with cookies for test session management
-reqwest = { version = "0.12", features = ["json", "cookies"] }
+reqwest = { version = "0.13", features = ["json", "cookies"] }
 
 [[test]]
 name = "integration"

@@ -151,7 +151,9 @@ impl std::fmt::Display for DockerError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             DockerError::CommandFailed(msg) => write!(f, "Docker command failed: {}", msg),
-            DockerError::StartFailed(msg) => write!(f, "Failed to start Docker environment: {}", msg),
+            DockerError::StartFailed(msg) => {
+                write!(f, "Failed to start Docker environment: {}", msg)
+            }
             DockerError::StopFailed(msg) => write!(f, "Failed to stop Docker environment: {}", msg),
             DockerError::Timeout(msg) => write!(f, "Timeout: {}", msg),
         }
