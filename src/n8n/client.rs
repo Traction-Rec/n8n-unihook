@@ -1,3 +1,4 @@
+use axum::http::HeaderMap;
 use crate::config::Config;
 use crate::n8n::models::{
     SlackTriggerConfig, WebhookEndpoints, WorkflowsResponse, parse_slack_trigger,
@@ -36,17 +37,10 @@ impl N8nClient {
             let response = self.fetch_workflows_page(cursor.as_deref()).await?;
 
             for workflow in response.data {
-                // Only process active workflows
-                if !workflow.active {
-                    debug!(
-                        workflow_id = %workflow.id,
-                        workflow_name = %workflow.name,
-                        "Skipping inactive workflow"
-                    );
-                    continue;
-                }
-
                 // Look for Slack Trigger nodes in the workflow
+                // We include both active and inactive workflows:
+                // - Active workflows: forward to both production and test webhooks
+                // - Inactive workflows: forward only to test webhooks (for development)
                 for node in &workflow.nodes {
                     if let Some(trigger) = parse_slack_trigger(
                         &workflow,
@@ -57,6 +51,7 @@ impl N8nClient {
                         info!(
                             workflow_id = %trigger.workflow_id,
                             workflow_name = %trigger.workflow_name,
+                            workflow_active = trigger.workflow_active,
                             event_type = %trigger.event_type,
                             watch_whole_workspace = trigger.watch_whole_workspace,
                             channels = ?trigger.channels,
@@ -128,19 +123,30 @@ impl N8nClient {
         &self,
         webhook_url: &str,
         payload: &serde_json::Value,
+        headers: &HeaderMap,
     ) -> Result<(), N8nClientError> {
-        debug!(webhook_url = %webhook_url, "Forwarding event to n8n webhook");
+        debug!(
+            webhook_url = %webhook_url,
+            forwarded_headers = headers.len(),
+            "Forwarding event to n8n webhook"
+        );
 
-        let response = self
-            .client
-            .post(webhook_url)
-            .json(payload)
-            .send()
-            .await
-            .map_err(|e| {
-                warn!(error = %e, webhook_url = %webhook_url, "Failed to forward event");
-                N8nClientError::RequestFailed(e.to_string())
-            })?;
+        // Build the request with forwarded headers
+        let mut request = self.client.post(webhook_url).json(payload);
+
+        // Forward relevant headers from the original Slack request
+        for (name, value) in headers.iter() {
+            if let Ok(header_name) = reqwest::header::HeaderName::from_bytes(name.as_str().as_bytes()) {
+                if let Ok(header_value) = reqwest::header::HeaderValue::from_bytes(value.as_bytes()) {
+                    request = request.header(header_name, header_value);
+                }
+            }
+        }
+
+        let response = request.send().await.map_err(|e| {
+            warn!(error = %e, webhook_url = %webhook_url, "Failed to forward event");
+            N8nClientError::RequestFailed(e.to_string())
+        })?;
 
         if !response.status().is_success() {
             let status = response.status();

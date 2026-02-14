@@ -46,7 +46,12 @@ pub struct SlackTriggerConfig {
     /// The workflow name for logging
     pub workflow_name: String,
 
-    /// The production webhook URL to forward events to (for active workflows)
+    /// Whether the workflow is active (triggers enabled in n8n)
+    /// When true, events are forwarded to both production and test webhooks
+    /// When false, events are only forwarded to test webhooks (for development)
+    pub workflow_active: bool,
+
+    /// The production webhook URL to forward events to (only for active workflows)
     pub webhook_url: String,
 
     /// The test webhook URL to forward events to (for workflow testing in n8n UI)
@@ -161,6 +166,7 @@ pub fn parse_slack_trigger(
     Some(SlackTriggerConfig {
         workflow_id: workflow.id.clone(),
         workflow_name: workflow.name.clone(),
+        workflow_active: workflow.active,
         webhook_url,
         test_webhook_url,
         event_type,
@@ -221,6 +227,7 @@ mod tests {
         SlackTriggerConfig {
             workflow_id: "wf1".to_string(),
             workflow_name: "Test Workflow".to_string(),
+            workflow_active: true,
             webhook_url: "http://localhost:5678/webhook/abc123/webhook".to_string(),
             test_webhook_url: "http://localhost:5678/webhook-test/abc123/webhook".to_string(),
             event_type: event_type.to_string(),

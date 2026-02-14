@@ -1,3 +1,4 @@
+use axum::http::HeaderMap;
 use crate::config::Config;
 use crate::n8n::{N8nClient, SlackTriggerConfig};
 use crate::slack::SlackEventCallback;
@@ -68,6 +69,7 @@ impl Router {
         &self,
         callback: &SlackEventCallback,
         raw_payload: &serde_json::Value,
+        headers: HeaderMap,
     ) {
         let event = &callback.event;
         let n8n_event_type = event.to_n8n_event_type();
@@ -107,8 +109,12 @@ impl Router {
             "Forwarding event to matching triggers"
         );
 
+        // Wrap headers in Arc for sharing across async tasks
+        let headers = Arc::new(headers);
+
         // Forward to all matching triggers concurrently
-        // Each trigger gets the event sent to both production and test webhook URLs
+        // - Production webhooks: only for active workflows
+        // - Test webhooks: for all workflows (allows testing before activation)
         let mut forwards = Vec::new();
 
         for trigger in &matching_triggers {
@@ -116,30 +122,47 @@ impl Router {
             let workflow_name = trigger.workflow_name.clone();
             let payload = raw_payload.clone();
 
-            // Production webhook
-            let prod_client = client.clone();
-            let prod_url = trigger.webhook_url.clone();
-            let prod_name = workflow_name.clone();
-            let prod_payload = payload.clone();
-            forwards.push(tokio::spawn(async move {
-                Self::forward_to_webhook(
-                    &prod_client,
-                    &prod_url,
-                    &prod_name,
-                    "production",
-                    &prod_payload,
-                )
-                .await
-            }));
+            // Production webhook - only for active workflows
+            if trigger.workflow_active {
+                let prod_client = client.clone();
+                let prod_url = trigger.webhook_url.clone();
+                let prod_name = workflow_name.clone();
+                let prod_payload = payload.clone();
+                let prod_headers = headers.clone();
+                forwards.push(tokio::spawn(async move {
+                    Self::forward_to_webhook(
+                        &prod_client,
+                        &prod_url,
+                        &prod_name,
+                        "production",
+                        &prod_payload,
+                        &prod_headers,
+                    )
+                    .await
+                }));
+            } else {
+                debug!(
+                    workflow_name = %workflow_name,
+                    "Skipping production webhook for inactive workflow"
+                );
+            }
 
-            // Test webhook
+            // Test webhook - always forward (for development and testing)
             let test_client = client.clone();
             let test_url = trigger.test_webhook_url.clone();
             let test_name = workflow_name.clone();
             let test_payload = payload.clone();
+            let test_headers = headers.clone();
             forwards.push(tokio::spawn(async move {
-                Self::forward_to_webhook(&test_client, &test_url, &test_name, "test", &test_payload)
-                    .await
+                Self::forward_to_webhook(
+                    &test_client,
+                    &test_url,
+                    &test_name,
+                    "test",
+                    &test_payload,
+                    &test_headers,
+                )
+                .await
             }));
         }
 
@@ -157,8 +180,9 @@ impl Router {
         workflow_name: &str,
         webhook_type: &str,
         payload: &serde_json::Value,
+        headers: &HeaderMap,
     ) {
-        match client.forward_event(webhook_url, payload).await {
+        match client.forward_event(webhook_url, payload, headers).await {
             Ok(()) => {
                 debug!(
                     workflow_name = %workflow_name,
