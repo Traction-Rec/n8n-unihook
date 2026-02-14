@@ -1,0 +1,41 @@
+{
+  "name": "Test Reaction Trigger",
+  "nodes": [
+    {
+      "parameters": {
+        "trigger": ["reaction_added"],
+        "watchWorkspace": true,
+        "options": {}
+      },
+      "id": "slack-trigger-reaction",
+      "name": "Slack Trigger",
+      "type": "n8n-nodes-base.slackTrigger",
+      "typeVersion": 1,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {},
+      "id": "noop-node-reaction",
+      "name": "No Operation",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [450, 300]
+    }
+  ],
+  "connections": {
+    "Slack Trigger": {
+      "main": [
+        [
+          {
+            "node": "No Operation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

@@ -1,0 +1,45 @@
+{
+  "name": "Test Channel Specific Trigger",
+  "nodes": [
+    {
+      "parameters": {
+        "trigger": ["message"],
+        "channelId": {
+          "__rl": true,
+          "value": "C123456",
+          "mode": "id"
+        },
+        "options": {}
+      },
+      "id": "slack-trigger-channel",
+      "name": "Slack Trigger",
+      "type": "n8n-nodes-base.slackTrigger",
+      "typeVersion": 1,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {},
+      "id": "noop-node",
+      "name": "No Operation",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [450, 300]
+    }
+  ],
+  "connections": {
+    "Slack Trigger": {
+      "main": [
+        [
+          {
+            "node": "No Operation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

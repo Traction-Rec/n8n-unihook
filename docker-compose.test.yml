@@ -1,0 +1,66 @@
+# Integration test environment for n8n-slack-unihook
+# Usage: 
+#   1. Start n8n: docker compose -f docker-compose.test.yml up -d n8n
+#   2. Run setup script to get API key
+#   3. Start n8n-slack-unihook with API key: N8N_API_KEY=xxx docker compose -f docker-compose.test.yml up -d n8n-slack-unihook
+
+services:
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: n8n-test
+    ports:
+      - "5678:5678"
+    environment:
+      # Webhook URL configuration
+      - WEBHOOK_URL=http://n8n:5678
+      - N8N_HOST=0.0.0.0
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=http
+      # Disable telemetry in tests
+      - N8N_DIAGNOSTICS_ENABLED=false
+      - N8N_PERSONALIZATION_ENABLED=false
+      # Use SQLite for simplicity (no external DB needed)
+      - DB_TYPE=sqlite
+      # Skip the onboarding survey
+      - N8N_SKIP_SETUP_WIZARD=true
+    volumes:
+      - n8n_test_data:/home/node/.n8n
+    networks:
+      - test-network
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:5678/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+  n8n-slack-unihook:
+    build: .
+    container_name: n8n-slack-unihook-test
+    ports:
+      - "3000:3000"
+    environment:
+      # API key must be provided - set via environment before starting
+      - N8N_API_KEY=${N8N_API_KEY:-}
+      - N8N_API_URL=http://n8n:5678
+      - LISTEN_ADDR=0.0.0.0:3000
+      - REFRESH_INTERVAL_SECS=5
+      - RUST_LOG=slack_unihook=debug
+    networks:
+      - test-network
+    depends_on:
+      n8n:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
+networks:
+  test-network:
+    driver: bridge
+
+volumes:
+  n8n_test_data:

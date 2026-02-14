@@ -1,0 +1,51 @@
+version: '3.8'
+
+services:
+  n8n-slack-unihook:
+    build: .
+    container_name: n8n-slack-unihook
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      # Required: Your n8n API key
+      - N8N_API_KEY=${N8N_API_KEY}
+      # n8n instance URL (use container name if in same docker network)
+      - N8N_API_URL=${N8N_API_URL:-http://n8n:5678}
+      # Address to bind (default: 0.0.0.0:3000)
+      - LISTEN_ADDR=0.0.0.0:3000
+      # How often to refresh trigger configs from n8n (seconds)
+      - REFRESH_INTERVAL_SECS=${REFRESH_INTERVAL_SECS:-60}
+      # Log level
+      - RUST_LOG=${RUST_LOG:-slack_unihook=info}
+    networks:
+      - n8n-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+
+  # Example n8n service (uncomment if needed)
+  # n8n:
+  #   image: n8nio/n8n
+  #   container_name: n8n
+  #   restart: unless-stopped
+  #   ports:
+  #     - "5678:5678"
+  #   environment:
+  #     - N8N_HOST=localhost
+  #     - N8N_PORT=5678
+  #     - N8N_PROTOCOL=http
+  #   volumes:
+  #     - n8n_data:/home/node/.n8n
+  #   networks:
+  #     - n8n-network
+
+networks:
+  n8n-network:
+    driver: bridge
+
+# volumes:
+#   n8n_data:

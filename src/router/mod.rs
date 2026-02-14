@@ -1,0 +1,179 @@
+use crate::config::Config;
+use crate::n8n::{N8nClient, SlackTriggerConfig};
+use crate::slack::SlackEventCallback;
+use parking_lot::RwLock;
+use std::sync::Arc;
+use std::time::Duration;
+use tokio::time::interval;
+use tracing::{debug, error, info, warn};
+
+/// The routing engine that manages trigger configurations and forwards events
+pub struct Router {
+    /// Cached trigger configurations
+    triggers: Arc<RwLock<Vec<SlackTriggerConfig>>>,
+
+    /// n8n API client
+    n8n_client: Arc<N8nClient>,
+
+    /// Configuration
+    config: Arc<Config>,
+}
+
+impl Router {
+    /// Create a new router instance
+    pub fn new(config: Arc<Config>) -> Self {
+        let n8n_client = Arc::new(N8nClient::new(config.clone()));
+        Self {
+            triggers: Arc::new(RwLock::new(Vec::new())),
+            n8n_client,
+            config,
+        }
+    }
+
+    /// Start the background task that periodically refreshes trigger configurations
+    pub fn start_refresh_task(self: Arc<Self>) {
+        let router = self.clone();
+        let refresh_interval = self.config.refresh_interval_secs;
+
+        tokio::spawn(async move {
+            // Initial load
+            if let Err(e) = router.refresh_triggers().await {
+                error!(error = %e, "Failed initial trigger load");
+            }
+
+            // Periodic refresh
+            let mut ticker = interval(Duration::from_secs(refresh_interval));
+            loop {
+                ticker.tick().await;
+                if let Err(e) = router.refresh_triggers().await {
+                    warn!(error = %e, "Failed to refresh triggers");
+                }
+            }
+        });
+    }
+
+    /// Refresh the trigger configurations from n8n
+    async fn refresh_triggers(&self) -> Result<(), crate::n8n::N8nClientError> {
+        info!("Refreshing Slack trigger configurations from n8n");
+        let new_triggers = self.n8n_client.fetch_slack_triggers().await?;
+
+        let mut triggers = self.triggers.write();
+        *triggers = new_triggers;
+
+        Ok(())
+    }
+
+    /// Route a Slack event to all matching triggers
+    pub async fn route_event(
+        &self,
+        callback: &SlackEventCallback,
+        raw_payload: &serde_json::Value,
+    ) {
+        let event = &callback.event;
+        let n8n_event_type = event.to_n8n_event_type();
+        let channel = event.channel.as_deref();
+
+        debug!(
+            event_type = %event.event_type,
+            n8n_event_type = %n8n_event_type,
+            channel = ?channel,
+            event_id = %callback.event_id,
+            "Routing Slack event"
+        );
+
+        // Get matching triggers
+        let matching_triggers: Vec<SlackTriggerConfig> = {
+            let triggers = self.triggers.read();
+            triggers
+                .iter()
+                .filter(|t| t.matches_event(n8n_event_type, channel))
+                .cloned()
+                .collect()
+        };
+
+        if matching_triggers.is_empty() {
+            debug!(
+                event_type = %n8n_event_type,
+                channel = ?channel,
+                "No matching triggers found for event"
+            );
+            return;
+        }
+
+        info!(
+            event_id = %callback.event_id,
+            event_type = %n8n_event_type,
+            matching_count = matching_triggers.len(),
+            "Forwarding event to matching triggers"
+        );
+
+        // Forward to all matching triggers concurrently
+        // Each trigger gets the event sent to both production and test webhook URLs
+        let mut forwards = Vec::new();
+        
+        for trigger in &matching_triggers {
+            let client = self.n8n_client.clone();
+            let workflow_name = trigger.workflow_name.clone();
+            let payload = raw_payload.clone();
+
+            // Production webhook
+            let prod_client = client.clone();
+            let prod_url = trigger.webhook_url.clone();
+            let prod_name = workflow_name.clone();
+            let prod_payload = payload.clone();
+            forwards.push(tokio::spawn(async move {
+                Self::forward_to_webhook(&prod_client, &prod_url, &prod_name, "production", &prod_payload).await
+            }));
+
+            // Test webhook
+            let test_client = client.clone();
+            let test_url = trigger.test_webhook_url.clone();
+            let test_name = workflow_name.clone();
+            let test_payload = payload.clone();
+            forwards.push(tokio::spawn(async move {
+                Self::forward_to_webhook(&test_client, &test_url, &test_name, "test", &test_payload).await
+            }));
+        }
+
+        // Wait for all forwards to complete (ignoring join errors)
+        for handle in forwards {
+            let _ = handle.await;
+        }
+    }
+
+    /// Forward an event to a single webhook URL with proper error handling
+    /// Errors are logged but do not propagate - other webhooks should still receive the event
+    async fn forward_to_webhook(
+        client: &N8nClient,
+        webhook_url: &str,
+        workflow_name: &str,
+        webhook_type: &str,
+        payload: &serde_json::Value,
+    ) {
+        match client.forward_event(webhook_url, payload).await {
+            Ok(()) => {
+                debug!(
+                    workflow_name = %workflow_name,
+                    webhook_url = %webhook_url,
+                    webhook_type = %webhook_type,
+                    "Successfully forwarded event"
+                );
+            }
+            Err(e) => {
+                // Log the error but don't propagate - other webhooks should still receive the event
+                warn!(
+                    workflow_name = %workflow_name,
+                    webhook_url = %webhook_url,
+                    webhook_type = %webhook_type,
+                    error = %e,
+                    "Failed to forward event (continuing to other webhooks)"
+                );
+            }
+        }
+    }
+
+    /// Get the current number of loaded triggers (for health checks)
+    pub fn trigger_count(&self) -> usize {
+        self.triggers.read().len()
+    }
+}

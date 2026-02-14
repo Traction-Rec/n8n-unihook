@@ -1,0 +1,41 @@
+{
+  "name": "Test Any Event Trigger",
+  "nodes": [
+    {
+      "parameters": {
+        "trigger": ["any_event"],
+        "watchWorkspace": true,
+        "options": {}
+      },
+      "id": "slack-trigger-any",
+      "name": "Slack Trigger",
+      "type": "n8n-nodes-base.slackTrigger",
+      "typeVersion": 1,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {},
+      "id": "noop-node-any",
+      "name": "No Operation",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [450, 300]
+    }
+  ],
+  "connections": {
+    "Slack Trigger": {
+      "main": [
+        [
+          {
+            "node": "No Operation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
