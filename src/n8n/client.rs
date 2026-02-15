@@ -1,8 +1,8 @@
-use axum::http::HeaderMap;
 use crate::config::Config;
 use crate::n8n::models::{
     SlackTriggerConfig, WebhookEndpoints, WorkflowsResponse, parse_slack_trigger,
 };
+use axum::http::HeaderMap;
 use reqwest::Client;
 use std::sync::Arc;
 use tracing::{debug, error, info, warn};
@@ -136,8 +136,11 @@ impl N8nClient {
 
         // Forward relevant headers from the original Slack request
         for (name, value) in headers.iter() {
-            if let Ok(header_name) = reqwest::header::HeaderName::from_bytes(name.as_str().as_bytes()) {
-                if let Ok(header_value) = reqwest::header::HeaderValue::from_bytes(value.as_bytes()) {
+            if let Ok(header_name) =
+                reqwest::header::HeaderName::from_bytes(name.as_str().as_bytes())
+            {
+                if let Ok(header_value) = reqwest::header::HeaderValue::from_bytes(value.as_bytes())
+                {
                     request = request.header(header_name, header_value);
                 }
             }

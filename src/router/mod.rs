@@ -1,7 +1,7 @@
-use axum::http::HeaderMap;
 use crate::config::Config;
 use crate::n8n::{N8nClient, SlackTriggerConfig};
 use crate::slack::SlackEventCallback;
+use axum::http::HeaderMap;
 use parking_lot::RwLock;
 use std::sync::Arc;
 use std::time::Duration;

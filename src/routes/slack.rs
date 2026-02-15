@@ -122,10 +122,7 @@ mod tests {
         let forwarded = extract_forwarded_headers(&headers);
 
         assert_eq!(forwarded.len(), 1);
-        assert_eq!(
-            forwarded.get("x-slack-signature").unwrap(),
-            "v0=abc123"
-        );
+        assert_eq!(forwarded.get("x-slack-signature").unwrap(), "v0=abc123");
     }
 
     #[test]
@@ -156,10 +153,7 @@ mod tests {
         let forwarded = extract_forwarded_headers(&headers);
 
         assert_eq!(forwarded.len(), 1);
-        assert_eq!(
-            forwarded.get("content-type").unwrap(),
-            "application/json"
-        );
+        assert_eq!(forwarded.get("content-type").unwrap(), "application/json");
     }
 
     #[test]
