@@ -212,17 +212,18 @@ impl TestEnvironment {
         Ok(())
     }
 
-    /// Send a Slack event to slack-unihook
+    /// Send a Slack event to slack-unihook (automatically signed)
+    ///
+    /// This sends the event with proper Slack signature headers using the
+    /// default test signing secret. All events are signed to match n8n's
+    /// signature verification behavior.
     pub async fn send_slack_event(
         &self,
         payload: &Value,
     ) -> Result<reqwest::Response, TestEnvError> {
-        self.http_client
-            .post(format!("{}/slack/events", UNIHOOK_URL))
-            .json(payload)
-            .send()
+        // Always sign with the test signing secret
+        self.send_signed_slack_event(payload, TEST_SLACK_SIGNING_SECRET)
             .await
-            .map_err(|e| TestEnvError::RequestError(e.to_string()))
     }
 
     /// Send a signed Slack event to slack-unihook
