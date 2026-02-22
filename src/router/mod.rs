@@ -15,6 +15,10 @@ use tracing::{debug, warn};
 ///
 /// The `raw_body` is the exact raw request body from the source (Slack, Jira, etc.),
 /// forwarded as-is to preserve signature/authentication verification by n8n.
+///
+/// Returns the HTTP status code if the request was sent successfully, or `None`
+/// if the connection failed entirely. Callers can use this to detect 401s and
+/// trigger a retry with refreshed credentials.
 pub async fn forward_to_webhook(
     client: &N8nClient,
     webhook_url: &str,
@@ -22,15 +26,18 @@ pub async fn forward_to_webhook(
     webhook_type: &str,
     raw_body: &str,
     headers: &HeaderMap,
-) {
+) -> Option<u16> {
     match client.forward_event(webhook_url, raw_body, headers).await {
-        Ok(()) => {
-            debug!(
-                workflow_name = %workflow_name,
-                webhook_url = %webhook_url,
-                webhook_type = %webhook_type,
-                "Successfully forwarded event"
-            );
+        Ok(status) => {
+            if (200..300).contains(&status) {
+                debug!(
+                    workflow_name = %workflow_name,
+                    webhook_url = %webhook_url,
+                    webhook_type = %webhook_type,
+                    "Successfully forwarded event"
+                );
+            }
+            Some(status)
         }
         Err(e) => {
             // Log the error but don't propagate - other webhooks should still receive the event
@@ -41,6 +48,7 @@ pub async fn forward_to_webhook(
                 error = %e,
                 "Failed to forward event (continuing to other webhooks)"
             );
+            None
         }
     }
 }
