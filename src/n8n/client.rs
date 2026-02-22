@@ -147,6 +147,7 @@ impl N8nClient {
                             events = ?trigger.events,
                             owner = %trigger.owner,
                             repository = %trigger.repository,
+                            has_webhook_secret = trigger.webhook_secret.is_some(),
                             "Found GitHub trigger"
                         );
                         triggers.push(trigger);
@@ -215,12 +216,15 @@ impl N8nClient {
     /// The `raw_body` parameter is the exact raw request body from the source
     /// (Slack, Jira, etc.). This is forwarded as-is (not re-serialized) to
     /// preserve the exact bytes for signature/authentication verification by n8n.
+    ///
+    /// Returns the HTTP status code from n8n's response on success, or an error
+    /// if the request couldn't be sent at all (connection failure, DNS, etc.).
     pub async fn forward_event(
         &self,
         webhook_url: &str,
         raw_body: &str,
         headers: &HeaderMap,
-    ) -> Result<(), N8nClientError> {
+    ) -> Result<u16, N8nClientError> {
         debug!(
             webhook_url = %webhook_url,
             forwarded_headers = headers.len(),
@@ -249,8 +253,10 @@ impl N8nClient {
             N8nClientError::RequestFailed(e.to_string())
         })?;
 
-        if !response.status().is_success() {
-            let status = response.status();
+        let status = response.status();
+        let status_code = status.as_u16();
+
+        if !status.is_success() {
             warn!(
                 status = %status,
                 webhook_url = %webhook_url,
@@ -258,7 +264,7 @@ impl N8nClient {
             );
         }
 
-        Ok(())
+        Ok(status_code)
     }
 }
 
