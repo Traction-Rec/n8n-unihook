@@ -50,6 +50,8 @@ pub struct SlackTriggerRow {
     pub watch_whole_workspace: bool,
 }
 
+type TriggerDedupSortKey = (String, bool, String, String);
+
 impl Database {
     /// Open (or create) the database at `path` and run migrations.
     /// Use `":memory:"` for an in-memory database (useful for tests).
@@ -491,12 +493,12 @@ fn dedupe_jira_triggers(triggers: &[JiraTriggerConfig]) -> Vec<JiraTriggerConfig
 /// Stable sort then keep first row per `webhook_id` so SQLite `UNIQUE` sync never fails.
 fn dedupe_by_webhook_id<T, F>(mut rows: Vec<T>, key_fn: F, provider: &'static str) -> Vec<T>
 where
-    F: Fn(&T) -> (String, bool, String, String),
+    F: Fn(&T) -> TriggerDedupSortKey,
 {
     let original = rows.len();
     // Same webhook_id together; prefer active workflow, then stable workflow id/name.
     rows.sort_by(|a, b| {
-        let (wa, _active_a, ida, na) = key_fn(a);
+        let (wa, active_a, ida, na) = key_fn(a);
         let (wb, active_b, idb, nb) = key_fn(b);
         wa.cmp(&wb)
             .then_with(|| active_b.cmp(&active_a))
@@ -507,11 +509,8 @@ where
     let mut seen = HashSet::new();
     let mut out = Vec::new();
     for row in rows {
-        let wid = key_fn(&row).0;
-        if seen.insert(wid.clone()) {
-            out.push(row);
-        } else {
-            let (_, _, wf_id, wf_name) = key_fn(&row);
+        let (wid, _, wf_id, wf_name) = key_fn(&row);
+        if seen.contains(&wid) {
             warn!(
                 provider = %provider,
                 webhook_id = %wid,
@@ -519,6 +518,9 @@ where
                 workflow_name = %wf_name,
                 "Skipping trigger: duplicate webhook_id (another workflow kept for this id)"
             );
+        } else {
+            seen.insert(wid);
+            out.push(row);
         }
     }
     if out.len() < original {
