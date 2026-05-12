@@ -139,6 +139,8 @@ impl N8nTestClient {
             .as_millis() as i64
             + (365 * 24 * 60 * 60 * 1000);
 
+        // Must align with n8n OWNER_API_KEY_SCOPES (no workflow:execute — use
+        // workflow:activate/deactivate and execution:* for our test client).
         let api_key_payload = serde_json::json!({
             "label": "integration-test-key",
             "scopes": [
@@ -147,7 +149,10 @@ impl N8nTestClient {
                 "workflow:read",
                 "workflow:update",
                 "workflow:list",
-                "workflow:execute"
+                "workflow:activate",
+                "workflow:deactivate",
+                "execution:read",
+                "execution:list"
             ],
             "expiresAt": expires_at
         });
