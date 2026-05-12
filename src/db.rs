@@ -1,6 +1,7 @@
 use parking_lot::Mutex;
 use rusqlite::{Connection, OptionalExtension};
-use tracing::{debug, info};
+use std::collections::HashSet;
+use tracing::{debug, info, warn};
 
 use crate::github::GitHubTriggerConfig;
 use crate::jira::JiraTriggerConfig;
@@ -48,6 +49,8 @@ pub struct SlackTriggerRow {
     pub channels: Vec<String>,
     pub watch_whole_workspace: bool,
 }
+
+type TriggerDedupSortKey = (String, bool, String, String);
 
 impl Database {
     /// Open (or create) the database at `path` and run migrations.
@@ -203,10 +206,15 @@ impl Database {
 
     /// Replace all GitHub trigger rows with the supplied set (inside a
     /// transaction). This is called by the periodic sync job.
+    ///
+    /// If n8n returns multiple trigger nodes with the same `webhook_id`, only one
+    /// row per id is kept (active workflows win, then lexicographic `workflow_id`)
+    /// so the sync transaction does not abort with a UNIQUE constraint error.
     pub fn sync_github_triggers(
         &self,
         triggers: &[GitHubTriggerConfig],
     ) -> Result<(), rusqlite::Error> {
+        let triggers = dedupe_github_triggers(triggers);
         let mut conn = self.conn.lock();
         let tx = conn.transaction()?;
         tx.execute("DELETE FROM github_triggers", [])?;
@@ -216,7 +224,7 @@ impl Database {
                  (webhook_id, workflow_id, workflow_name, workflow_active, owner, repository, events) \
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             )?;
-            for t in triggers {
+            for t in &triggers {
                 let events_json =
                     serde_json::to_string(&t.events).unwrap_or_else(|_| "[]".to_string());
                 stmt.execute(rusqlite::params![
@@ -299,10 +307,14 @@ impl Database {
     // ── Jira triggers ───────────────────────────────────────────────────
 
     /// Replace all Jira trigger rows with the supplied set.
+    ///
+    /// Duplicate `webhook_id` values from n8n are collapsed to one row each so
+    /// the SQLite UNIQUE constraint cannot roll back the entire sync.
     pub fn sync_jira_triggers(
         &self,
         triggers: &[JiraTriggerConfig],
     ) -> Result<(), rusqlite::Error> {
+        let triggers = dedupe_jira_triggers(triggers);
         let mut conn = self.conn.lock();
         let tx = conn.transaction()?;
         tx.execute("DELETE FROM jira_triggers", [])?;
@@ -312,7 +324,7 @@ impl Database {
                  (webhook_id, workflow_id, workflow_name, workflow_active, events) \
                  VALUES (?1, ?2, ?3, ?4, ?5)",
             )?;
-            for t in triggers {
+            for t in &triggers {
                 let events_json =
                     serde_json::to_string(&t.events).unwrap_or_else(|_| "[]".to_string());
                 stmt.execute(rusqlite::params![
@@ -362,10 +374,14 @@ impl Database {
     // ── Slack triggers ──────────────────────────────────────────────────
 
     /// Replace all Slack trigger rows with the supplied set.
+    ///
+    /// Duplicate `webhook_id` values from n8n are collapsed to one row each so
+    /// the SQLite UNIQUE constraint cannot roll back the entire sync.
     pub fn sync_slack_triggers(
         &self,
         triggers: &[SlackTriggerConfig],
     ) -> Result<(), rusqlite::Error> {
+        let triggers = dedupe_slack_triggers(triggers);
         let mut conn = self.conn.lock();
         let tx = conn.transaction()?;
         tx.execute("DELETE FROM slack_triggers", [])?;
@@ -375,7 +391,7 @@ impl Database {
                  (webhook_id, workflow_id, workflow_name, workflow_active, event_type, channels, watch_whole_workspace) \
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             )?;
-            for t in triggers {
+            for t in &triggers {
                 let channels_json =
                     serde_json::to_string(&t.channels).unwrap_or_else(|_| "[]".to_string());
                 stmt.execute(rusqlite::params![
@@ -427,6 +443,96 @@ impl Database {
             conn.query_row("SELECT COUNT(*) FROM slack_triggers", [], |row| row.get(0))?;
         Ok(count as usize)
     }
+}
+
+fn dedupe_slack_triggers(triggers: &[SlackTriggerConfig]) -> Vec<SlackTriggerConfig> {
+    dedupe_by_webhook_id(
+        triggers.to_vec(),
+        |t| {
+            (
+                t.webhook_id.clone(),
+                t.workflow_active,
+                t.workflow_id.clone(),
+                t.workflow_name.clone(),
+            )
+        },
+        "Slack",
+    )
+}
+
+fn dedupe_github_triggers(triggers: &[GitHubTriggerConfig]) -> Vec<GitHubTriggerConfig> {
+    dedupe_by_webhook_id(
+        triggers.to_vec(),
+        |t| {
+            (
+                t.webhook_id.clone(),
+                t.workflow_active,
+                t.workflow_id.clone(),
+                t.workflow_name.clone(),
+            )
+        },
+        "GitHub",
+    )
+}
+
+fn dedupe_jira_triggers(triggers: &[JiraTriggerConfig]) -> Vec<JiraTriggerConfig> {
+    dedupe_by_webhook_id(
+        triggers.to_vec(),
+        |t| {
+            (
+                t.webhook_id.clone(),
+                t.workflow_active,
+                t.workflow_id.clone(),
+                t.workflow_name.clone(),
+            )
+        },
+        "Jira",
+    )
+}
+
+/// Stable sort then keep first row per `webhook_id` so SQLite `UNIQUE` sync never fails.
+fn dedupe_by_webhook_id<T, F>(mut rows: Vec<T>, key_fn: F, provider: &'static str) -> Vec<T>
+where
+    F: Fn(&T) -> TriggerDedupSortKey,
+{
+    let original = rows.len();
+    // Same webhook_id together; prefer active workflow, then stable workflow id/name.
+    rows.sort_by(|a, b| {
+        let (wa, active_a, ida, na) = key_fn(a);
+        let (wb, active_b, idb, nb) = key_fn(b);
+        wa.cmp(&wb)
+            .then_with(|| active_b.cmp(&active_a))
+            .then_with(|| ida.cmp(&idb))
+            .then_with(|| na.cmp(&nb))
+    });
+
+    let mut seen = HashSet::new();
+    let mut out = Vec::new();
+    for row in rows {
+        let (wid, _, wf_id, wf_name) = key_fn(&row);
+        if seen.contains(&wid) {
+            warn!(
+                provider = %provider,
+                webhook_id = %wid,
+                workflow_id = %wf_id,
+                workflow_name = %wf_name,
+                "Skipping trigger: duplicate webhook_id (another workflow kept for this id)"
+            );
+        } else {
+            seen.insert(wid);
+            out.push(row);
+        }
+    }
+    if out.len() < original {
+        warn!(
+            provider = %provider,
+            loaded = original,
+            kept = out.len(),
+            dropped = original - out.len(),
+            "Duplicate webhook_id across trigger nodes; assign unique webhook IDs in n8n if multiple workflows must receive the same provider stream"
+        );
+    }
+    out
 }
 
 #[cfg(test)]
@@ -658,5 +764,37 @@ mod tests {
         assert_eq!(rows[0].event_type, "message");
         assert_eq!(rows[0].channels, vec!["C123"]);
         assert!(!rows[0].watch_whole_workspace);
+    }
+
+    #[test]
+    fn test_sync_slack_triggers_dedupes_duplicate_webhook_id() {
+        let db = open_memory_db();
+
+        let triggers = vec![
+            SlackTriggerConfig {
+                webhook_id: "same".to_string(),
+                workflow_id: "wf-inactive".to_string(),
+                workflow_name: "Inactive dup".to_string(),
+                workflow_active: false,
+                event_type: "message".to_string(),
+                channels: vec![],
+                watch_whole_workspace: true,
+            },
+            SlackTriggerConfig {
+                webhook_id: "same".to_string(),
+                workflow_id: "wf-active".to_string(),
+                workflow_name: "Active dup".to_string(),
+                workflow_active: true,
+                event_type: "any_event".to_string(),
+                channels: vec![],
+                watch_whole_workspace: true,
+            },
+        ];
+        db.sync_slack_triggers(&triggers).unwrap();
+
+        let rows = db.query_slack_triggers().unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].workflow_name, "Active dup");
+        assert!(rows[0].workflow_active);
     }
 }

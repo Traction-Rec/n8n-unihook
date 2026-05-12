@@ -177,9 +177,12 @@ setup_n8n() {
     # Calculate expiration timestamp (1 year from now in milliseconds)
     local expires_at=$(($(date +%s) * 1000 + 365 * 24 * 60 * 60 * 1000))
     
+    # Scopes must match n8n's allowed API key scopes for the instance owner role
+    # (see n8n packages/@n8n/permissions/src/public-api-permissions.ee.ts — there is
+    # no workflow:execute; use workflow:activate/deactivate and execution:* instead).
     local api_key_response=$(curl -s -b "$cookie_jar" -X POST http://localhost:6789/rest/api-keys \
         -H "Content-Type: application/json" \
-        -d "{\"label\":\"integration-test-key\",\"scopes\":[\"workflow:create\",\"workflow:delete\",\"workflow:read\",\"workflow:update\",\"workflow:list\",\"workflow:execute\"],\"expiresAt\":$expires_at}")
+        -d "{\"label\":\"integration-test-key\",\"scopes\":[\"workflow:create\",\"workflow:delete\",\"workflow:read\",\"workflow:update\",\"workflow:list\",\"workflow:activate\",\"workflow:deactivate\",\"execution:read\",\"execution:list\"],\"expiresAt\":$expires_at}")
     
     # Extract raw API key from response
     N8N_API_KEY=$(echo "$api_key_response" | grep -o '"rawApiKey":"[^"]*"' | cut -d'"' -f4)
