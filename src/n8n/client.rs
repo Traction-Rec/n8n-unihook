@@ -3,6 +3,7 @@ use crate::github::triggers::{GitHubTriggerConfig, parse_github_trigger};
 use crate::jira::triggers::{JiraTriggerConfig, parse_jira_trigger};
 use crate::n8n::models::WorkflowsResponse;
 use crate::slack::triggers::{SlackTriggerConfig, parse_slack_trigger};
+use crate::zoom::triggers::{ZoomTriggerConfig, parse_zoom_trigger};
 use axum::http::HeaderMap;
 use reqwest::Client;
 use std::sync::Arc;
@@ -98,6 +99,39 @@ impl N8nClient {
         }
 
         info!(count = triggers.len(), "Loaded Jira trigger configurations");
+        Ok(triggers)
+    }
+
+    /// Fetch all workflows and extract Zoom trigger configurations
+    pub async fn fetch_zoom_triggers(&self) -> Result<Vec<ZoomTriggerConfig>, N8nClientError> {
+        let mut triggers = Vec::new();
+        let mut cursor: Option<String> = None;
+
+        loop {
+            let response = self.fetch_workflows_page(cursor.as_deref()).await?;
+
+            for workflow in response.data {
+                for node in &workflow.nodes {
+                    if let Some(trigger) = parse_zoom_trigger(&workflow, node) {
+                        info!(
+                            workflow_id = %trigger.workflow_id,
+                            workflow_name = %trigger.workflow_name,
+                            workflow_active = trigger.workflow_active,
+                            events = ?trigger.events,
+                            "Found Zoom trigger"
+                        );
+                        triggers.push(trigger);
+                    }
+                }
+            }
+
+            match response.next_cursor {
+                Some(next) if !next.is_empty() => cursor = Some(next),
+                _ => break,
+            }
+        }
+
+        info!(count = triggers.len(), "Loaded Zoom trigger configurations");
         Ok(triggers)
     }
 

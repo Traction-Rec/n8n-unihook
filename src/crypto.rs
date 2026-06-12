@@ -40,6 +40,51 @@ pub fn compute_hmac_sha256(secret: &str, body: &[u8]) -> String {
     format!("sha256={}", hex::encode(mac.finalize().into_bytes()))
 }
 
+/// Verify a Zoom webhook signature (`x-zm-signature` header).
+///
+/// Zoom signs the message `v0:{timestamp}:{body}` with HMAC-SHA256 and sends
+/// the digest as `v0=<hex>`.
+pub fn verify_zoom_webhook_signature(
+    secret: &str,
+    body: &[u8],
+    timestamp: &str,
+    signature: &str,
+) -> bool {
+    let expected = compute_zoom_webhook_signature(secret, timestamp, body);
+    constant_time_eq(signature.as_bytes(), expected.as_bytes())
+}
+
+/// Compute a Zoom webhook signature in `v0=<hex>` format.
+pub fn compute_zoom_webhook_signature(secret: &str, timestamp: &str, body: &[u8]) -> String {
+    let message = format!(
+        "v0:{}:{}",
+        timestamp,
+        std::str::from_utf8(body).unwrap_or("")
+    );
+    let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes()).expect("HMAC accepts any key");
+    mac.update(message.as_bytes());
+    format!("v0={}", hex::encode(mac.finalize().into_bytes()))
+}
+
+/// Compute the encrypted token for Zoom URL validation challenges.
+///
+/// `encryptedToken = HMAC-SHA256(secret, plainToken)` as lowercase hex.
+pub fn compute_zoom_url_validation_token(secret: &str, plain_token: &str) -> String {
+    let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes()).expect("HMAC accepts any key");
+    mac.update(plain_token.as_bytes());
+    hex::encode(mac.finalize().into_bytes())
+}
+
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    a.iter()
+        .zip(b.iter())
+        .fold(0u8, |acc, (x, y)| acc | (x ^ y))
+        == 0
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -136,6 +181,35 @@ mod tests {
         let body = b"";
         let signature = compute_hmac_sha256(secret, body);
         assert!(verify_hmac_sha256(secret, body, &signature));
+    }
+
+    #[test]
+    fn test_zoom_webhook_signature_roundtrip() {
+        let secret = "zoom-webhook-secret";
+        let timestamp = "1739923528";
+        let body = br#"{"event":"meeting.started","payload":{}}"#;
+        let signature = compute_zoom_webhook_signature(secret, timestamp, body);
+        assert!(signature.starts_with("v0="));
+        assert!(verify_zoom_webhook_signature(
+            secret, body, timestamp, &signature
+        ));
+    }
+
+    #[test]
+    fn test_zoom_webhook_signature_rejects_wrong_secret() {
+        let timestamp = "1739923528";
+        let body = b"{}";
+        let signature = compute_zoom_webhook_signature("secret-a", timestamp, body);
+        assert!(!verify_zoom_webhook_signature(
+            "secret-b", body, timestamp, &signature
+        ));
+    }
+
+    #[test]
+    fn test_zoom_url_validation_token() {
+        let token = compute_zoom_url_validation_token("my-secret", "plain-token-123");
+        assert_eq!(token.len(), 64);
+        assert!(token.chars().all(|c| c.is_ascii_hexdigit()));
     }
 
     #[test]

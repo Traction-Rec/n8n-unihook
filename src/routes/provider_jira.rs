@@ -102,22 +102,13 @@ mod tests {
     use crate::config::Config;
     use crate::db::Database;
     use crate::n8n::N8nClient;
-    use crate::router::{GitHubRouter, JiraRouter, SlackRouter};
+    use crate::router::{GitHubRouter, JiraRouter, SlackRouter, ZoomRouter};
     use axum::response::IntoResponse;
 
     /// Build a test `AppState` backed by an in-memory SQLite database.
     fn test_state() -> Arc<AppState> {
         let db = Arc::new(Database::open(":memory:").unwrap());
-        let config = Arc::new(Config {
-            n8n_api_url: "http://localhost:5678".to_string(),
-            n8n_api_key: "test-key".to_string(),
-            listen_addr: "0.0.0.0:3000".to_string(),
-            refresh_interval_secs: 600,
-            n8n_endpoint_webhook: "webhook".to_string(),
-            n8n_endpoint_webhook_test: "webhook-test".to_string(),
-            github_webhook_secret: None,
-            database_path: ":memory:".to_string(),
-        });
+        let config = Arc::new(Config::test_default());
         let n8n_client = Arc::new(N8nClient::new(config.clone()));
         let slack_router = Arc::new(SlackRouter::new(
             config.clone(),
@@ -134,11 +125,17 @@ mod tests {
             n8n_client.clone(),
             db.clone(),
         ));
+        let zoom_router = Arc::new(ZoomRouter::new(
+            config.clone(),
+            n8n_client.clone(),
+            db.clone(),
+        ));
 
         Arc::new(AppState {
             slack_router,
             jira_router,
             github_router,
+            zoom_router,
             config,
             db,
         })

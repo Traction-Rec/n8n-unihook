@@ -386,13 +386,7 @@ mod tests {
     fn test_config(base_url: &str) -> Arc<Config> {
         Arc::new(Config {
             n8n_api_url: base_url.to_string(),
-            n8n_api_key: "test-api-key".to_string(),
-            listen_addr: "0.0.0.0:3000".to_string(),
-            refresh_interval_secs: 600,
-            n8n_endpoint_webhook: "webhook".to_string(),
-            n8n_endpoint_webhook_test: "webhook-test".to_string(),
-            github_webhook_secret: None,
-            database_path: ":memory:".to_string(),
+            ..Config::test_default()
         })
     }
 

@@ -1,10 +1,12 @@
 pub mod github;
 pub mod jira;
 pub mod slack;
+pub mod zoom;
 
 pub use github::GitHubRouter;
 pub use jira::JiraRouter;
 pub use slack::SlackRouter;
+pub use zoom::ZoomRouter;
 
 use crate::n8n::N8nClient;
 use axum::http::HeaderMap;

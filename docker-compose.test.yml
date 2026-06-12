@@ -17,6 +17,8 @@ services:
   n8n:
     image: n8nio/n8n:latest
     container_name: n8n-test
+    user: root
+    entrypoint: ["/bin/sh", "/scripts/n8n-test-entrypoint.sh"]
     ports:
       - "6789:6789"
     environment:
@@ -37,6 +39,8 @@ services:
       - N8N_LDAP_DISABLED=true
     volumes:
       - n8n_test_data:/home/node/.n8n
+      - ${ZOOM_NODE_DIR}:/opt/zoom-node-package:ro
+      - ./scripts/n8n-test-entrypoint.sh:/scripts/n8n-test-entrypoint.sh:ro
     networks:
       - test-network
     healthcheck:
@@ -62,6 +66,9 @@ services:
       - RUST_LOG=n8n_slack_unihook=debug
       # Webhook secret for inbound GitHub signature verification
       - GITHUB_WEBHOOK_SECRET=test-github-webhook-secret-for-integration-tests
+      # Zoom webhook configuration
+      - ZOOM_WEBHOOK_SECRET=test-zoom-webhook-secret-for-integration-tests
+      - ZOOM_ALLOWED_EVENTS=meeting.started,meeting.ended,recording.completed
       # SQLite database for webhook secrets & trigger metadata
       - DATABASE_PATH=/data/unihook.db
     volumes:

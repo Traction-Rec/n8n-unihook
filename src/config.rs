@@ -1,4 +1,4 @@
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
 
 /// Configuration for the Slack Unihook router.
 /// All values are loaded from environment variables.
@@ -42,6 +42,31 @@ pub struct Config {
     /// tests).
     #[serde(default = "default_database_path")]
     pub database_path: String,
+
+    /// Secret token from the Zoom app Event Subscriptions settings.
+    /// Used for URL validation challenges and inbound webhook signature verification.
+    pub zoom_webhook_secret: String,
+
+    /// Comma-separated Zoom event types Unihook is allowed to forward.
+    /// Events not listed are acknowledged to Zoom but not routed to n8n.
+    #[serde(deserialize_with = "deserialize_comma_separated")]
+    pub zoom_allowed_events: Vec<String>,
+}
+
+fn deserialize_comma_separated<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let raw = String::deserialize(deserializer)?;
+    Ok(parse_comma_separated(&raw))
+}
+
+fn parse_comma_separated(raw: &str) -> Vec<String> {
+    raw.split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .collect()
 }
 
 fn default_n8n_api_url() -> String {
@@ -73,5 +98,53 @@ impl Config {
     /// Environment variables should be prefixed with nothing (e.g., N8N_API_URL).
     pub fn from_env() -> Result<Self, envy::Error> {
         envy::from_env::<Config>()
+    }
+
+    /// Returns true if the given Zoom event type is on the platform allowlist.
+    pub fn is_zoom_event_allowed(&self, event: &str) -> bool {
+        self.zoom_allowed_events.iter().any(|e| e == event)
+    }
+}
+
+#[cfg(test)]
+impl Config {
+    pub fn test_default() -> Self {
+        Self {
+            n8n_api_url: "http://localhost:5678".to_string(),
+            n8n_api_key: "test-key".to_string(),
+            listen_addr: "0.0.0.0:3000".to_string(),
+            refresh_interval_secs: 600,
+            n8n_endpoint_webhook: "webhook".to_string(),
+            n8n_endpoint_webhook_test: "webhook-test".to_string(),
+            github_webhook_secret: None,
+            database_path: ":memory:".to_string(),
+            zoom_webhook_secret: "test-zoom-secret".to_string(),
+            zoom_allowed_events: vec!["meeting.started".to_string()],
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_comma_separated_events() {
+        assert_eq!(
+            parse_comma_separated("meeting.started, meeting.ended,recording.completed"),
+            vec![
+                "meeting.started".to_string(),
+                "meeting.ended".to_string(),
+                "recording.completed".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_parse_comma_separated_empty_items_ignored() {
+        assert_eq!(
+            parse_comma_separated("a,, b, "),
+            vec!["a".to_string(), "b".to_string()]
+        );
     }
 }

@@ -7,6 +7,7 @@ pub mod github;
 pub mod jira;
 pub mod n8n_client;
 pub mod slack;
+pub mod zoom;
 
 pub use docker::{
     DockerConfig, services_running, start_docker_env, stop_docker_env, wait_for_services,
@@ -15,6 +16,7 @@ pub use github::*;
 pub use jira::*;
 pub use n8n_client::{N8nTestClient, WorkflowResponse};
 pub use slack::*;
+pub use zoom::*;
 
 use serde_json::Value;
 use std::sync::OnceLock;
@@ -24,13 +26,11 @@ use std::time::Duration;
 pub const N8N_URL: &str = "http://localhost:6789";
 pub const UNIHOOK_URL: &str = "http://localhost:3000";
 
-/// Test user credentials for n8n setup
+/// Test user credentials for n8n setup (must match scripts/run-integration-tests.sh)
 pub const TEST_EMAIL: &str = "test@example.com";
 pub const TEST_PASSWORD: &str = "TestPassword123"; // Must contain uppercase
-pub const TEST_FIRST_NAME: &str = "Test";
-pub const TEST_LAST_NAME: &str = "User";
 
-/// Test Slack signing secret for signature verification tests
+/// Test Slack signing secret for signature verification tests.
 /// This must match the signing secret configured in the test Slack credential
 pub const TEST_SLACK_SIGNING_SECRET: &str = "test-signing-secret-for-integration-tests";
 
@@ -54,52 +54,25 @@ pub(crate) fn uuid_simple() -> String {
 /// Global API key storage (set once during test setup)
 static API_KEY: OnceLock<String> = OnceLock::new();
 
-/// Get the API key from environment or create one if needed
+/// Get the API key provisioned by `scripts/run-integration-tests.sh`.
 ///
-/// The test script should set TEST_N8N_API_KEY environment variable
-pub async fn get_or_create_api_key() -> Result<String, TestEnvError> {
-    // Return cached key if available
+/// Requires `TEST_N8N_API_KEY` when tests are not launched via the script
+/// (e.g. `--skip-docker` after a manual `./scripts/run-integration-tests.sh -k`).
+pub fn get_api_key() -> Result<String, TestEnvError> {
     if let Some(key) = API_KEY.get() {
         return Ok(key.clone());
     }
 
-    // Check if API key is provided via environment (from the test script)
-    if let Ok(key) = std::env::var("TEST_N8N_API_KEY") {
-        let _ = API_KEY.set(key.clone());
-        return Ok(key);
-    }
+    let key = std::env::var("TEST_N8N_API_KEY").map_err(|_| {
+        TestEnvError::N8nError(
+            "TEST_N8N_API_KEY is not set. Run ./scripts/run-integration-tests.sh \
+             (or export TEST_N8N_API_KEY when using --skip-docker)."
+                .to_string(),
+        )
+    })?;
 
-    // Otherwise, set up n8n and create an API key
-    let client = N8nTestClient::new(N8N_URL);
-
-    // Check if n8n needs initial setup
-    let needs_setup = client
-        .needs_setup()
-        .await
-        .map_err(|e| TestEnvError::N8nError(format!("Failed to check n8n setup status: {}", e)))?;
-
-    if needs_setup {
-        println!("Setting up n8n owner account...");
-        client
-            .setup_owner(TEST_EMAIL, TEST_PASSWORD, TEST_FIRST_NAME, TEST_LAST_NAME)
-            .await
-            .map_err(|e| TestEnvError::N8nError(format!("Failed to setup n8n owner: {}", e)))?;
-        println!("Owner account created successfully");
-    }
-
-    // Create an API key with a unique label
-    println!("Creating API key...");
-    let api_key = client
-        .create_api_key(TEST_EMAIL, TEST_PASSWORD)
-        .await
-        .map_err(|e| TestEnvError::N8nError(format!("Failed to create API key: {}", e)))?;
-
-    println!("API key created successfully");
-
-    // Store for future use (ignore error if already set by another thread)
-    let _ = API_KEY.set(api_key.clone());
-
-    Ok(api_key)
+    let _ = API_KEY.set(key.clone());
+    Ok(key)
 }
 
 // ==================== Test Environment ====================
@@ -142,8 +115,8 @@ impl TestEnvironment {
             ));
         }
 
-        // Get or create API key for n8n
-        let api_key = get_or_create_api_key().await?;
+        // Get API key from environment (created by run-integration-tests.sh)
+        let api_key = get_api_key()?;
 
         // Get Slack credential ID from environment (created by test script)
         let slack_credential_id = std::env::var("SLACK_CREDENTIAL_ID").ok();
@@ -344,6 +317,44 @@ impl TestEnvironment {
             .map_err(|e| TestEnvError::RequestError(e.to_string()))
     }
 
+    /// Send a signed Zoom event to unihook's /zoom/events endpoint
+    pub async fn send_zoom_event(
+        &self,
+        payload: &Value,
+    ) -> Result<reqwest::Response, TestEnvError> {
+        self.send_signed_zoom_event(payload, TEST_ZOOM_WEBHOOK_SECRET)
+            .await
+    }
+
+    /// Send a Zoom event with a specific signing secret
+    pub async fn send_signed_zoom_event(
+        &self,
+        payload: &Value,
+        signing_secret: &str,
+    ) -> Result<reqwest::Response, TestEnvError> {
+        let body = serde_json::to_string(payload).map_err(|e| {
+            TestEnvError::RequestError(format!("Failed to serialize payload: {}", e))
+        })?;
+
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            .to_string();
+
+        let signature = compute_zoom_signature(signing_secret, &timestamp, &body);
+
+        self.http_client
+            .post(format!("{}/zoom/events", UNIHOOK_URL))
+            .header("content-type", "application/json")
+            .header("x-zm-signature", signature)
+            .header("x-zm-request-timestamp", timestamp)
+            .body(body)
+            .send()
+            .await
+            .map_err(|e| TestEnvError::RequestError(e.to_string()))
+    }
+
     /// Send a Slack event to unihook (automatically signed)
     ///
     /// This sends the event with proper Slack signature headers using the
@@ -449,6 +460,7 @@ const TRIGGER_NODE_TYPES: &[&str] = &[
     "n8n-nodes-base.slackTrigger",
     "n8n-nodes-base.jiraTrigger",
     "n8n-nodes-base.githubTrigger",
+    "n8n-nodes-unihook-zoom-trigger.zoomTrigger",
 ];
 
 /// Load a workflow fixture from the workflows directory.
@@ -559,6 +571,22 @@ pub async fn wait_for_jira_trigger_count(env: &TestEnvironment, expected: i64) -
             .get_health()
             .await
             .is_ok_and(|h| h["jira_triggers_loaded"].as_i64().unwrap_or(-1) == expected)
+        {
+            return true;
+        }
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+    false
+}
+
+/// Wait for the Zoom trigger count reported by the /health endpoint to reach
+/// the expected value.
+pub async fn wait_for_zoom_trigger_count(env: &TestEnvironment, expected: i64) -> bool {
+    for _ in 0..15 {
+        if env
+            .get_health()
+            .await
+            .is_ok_and(|h| h["zoom_triggers_loaded"].as_i64().unwrap_or(-1) == expected)
         {
             return true;
         }
