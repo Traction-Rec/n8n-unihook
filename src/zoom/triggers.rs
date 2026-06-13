@@ -19,9 +19,19 @@ pub struct ZoomTriggerConfig {
     pub events: Vec<String>,
 }
 
+/// n8n node type when installed as a community package (`nodes/node_modules/...`).
+pub const ZOOM_TRIGGER_NODE_TYPE: &str = "n8n-nodes-unihook-zoom-trigger.zoomTrigger";
+
+/// n8n node type when loaded via custom extensions (`.n8n/custom` / `N8N_CUSTOM_EXTENSIONS`).
+pub const ZOOM_TRIGGER_CUSTOM_NODE_TYPE: &str = "CUSTOM.zoomTrigger";
+
+fn is_zoom_trigger_node(node_type: &str) -> bool {
+    node_type == ZOOM_TRIGGER_NODE_TYPE || node_type == ZOOM_TRIGGER_CUSTOM_NODE_TYPE
+}
+
 /// Parse Zoom Trigger configuration from a workflow node
 pub fn parse_zoom_trigger(workflow: &Workflow, node: &WorkflowNode) -> Option<ZoomTriggerConfig> {
-    if node.node_type != "n8n-nodes-unihook-zoom-trigger.zoomTrigger" {
+    if !is_zoom_trigger_node(&node.node_type) {
         return None;
     }
 
@@ -64,11 +74,12 @@ mod tests {
     }
 
     fn create_zoom_trigger_node(
+        node_type: &str,
         webhook_id: Option<&str>,
         params: serde_json::Value,
     ) -> WorkflowNode {
         WorkflowNode {
-            node_type: "n8n-nodes-unihook-zoom-trigger.zoomTrigger".to_string(),
+            node_type: node_type.to_string(),
             name: "Zoom Trigger".to_string(),
             parameters: params,
             webhook_id: webhook_id.map(|s| s.to_string()),
@@ -77,8 +88,11 @@ mod tests {
 
     #[test]
     fn test_parse_zoom_trigger_basic() {
-        let node =
-            create_zoom_trigger_node(Some("webhook-z1"), json!({ "event": ["meeting.started"] }));
+        let node = create_zoom_trigger_node(
+            ZOOM_TRIGGER_NODE_TYPE,
+            Some("webhook-z1"),
+            json!({ "event": ["meeting.started"] }),
+        );
         let workflow = create_workflow("wf1", "Zoom Workflow", vec![node.clone()]);
 
         let config = parse_zoom_trigger(&workflow, &node).unwrap();
@@ -90,6 +104,7 @@ mod tests {
     #[test]
     fn test_parse_zoom_trigger_multiple_events() {
         let node = create_zoom_trigger_node(
+            ZOOM_TRIGGER_NODE_TYPE,
             Some("webhook-z2"),
             json!({ "event": ["meeting.started", "meeting.ended"] }),
         );
@@ -102,12 +117,31 @@ mod tests {
 
     #[test]
     fn test_parse_zoom_trigger_wildcard() {
-        let node = create_zoom_trigger_node(Some("webhook-z3"), json!({ "event": ["*"] }));
+        let node = create_zoom_trigger_node(
+            ZOOM_TRIGGER_NODE_TYPE,
+            Some("webhook-z3"),
+            json!({ "event": ["*"] }),
+        );
         let workflow = create_workflow("wf3", "Wildcard", vec![node.clone()]);
 
         let config = parse_zoom_trigger(&workflow, &node).unwrap();
 
         assert_eq!(config.events, vec!["*"]);
+    }
+
+    #[test]
+    fn test_parse_zoom_trigger_custom_node_type() {
+        let node = create_zoom_trigger_node(
+            ZOOM_TRIGGER_CUSTOM_NODE_TYPE,
+            Some("webhook-z4"),
+            json!({ "event": ["meeting.started", "meeting.ended"] }),
+        );
+        let workflow = create_workflow("wf4", "Custom Loader", vec![node.clone()]);
+
+        let config = parse_zoom_trigger(&workflow, &node).unwrap();
+
+        assert_eq!(config.webhook_id, "webhook-z4");
+        assert_eq!(config.events, vec!["meeting.started", "meeting.ended"]);
     }
 
     #[test]
@@ -125,7 +159,11 @@ mod tests {
 
     #[test]
     fn test_parse_node_without_webhook_id() {
-        let node = create_zoom_trigger_node(None, json!({ "event": ["meeting.started"] }));
+        let node = create_zoom_trigger_node(
+            ZOOM_TRIGGER_NODE_TYPE,
+            None,
+            json!({ "event": ["meeting.started"] }),
+        );
         let workflow = create_workflow("wf1", "Workflow", vec![node.clone()]);
 
         assert!(parse_zoom_trigger(&workflow, &node).is_none());
