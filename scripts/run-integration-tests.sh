@@ -214,7 +214,7 @@ setup_n8n() {
     # no workflow:execute; use workflow:activate/deactivate and execution:* instead).
     local api_key_response=$(curl -s -b "$cookie_jar" -X POST http://localhost:6789/rest/api-keys \
         -H "Content-Type: application/json" \
-        -d "{\"label\":\"integration-test-key\",\"scopes\":[\"workflow:create\",\"workflow:delete\",\"workflow:read\",\"workflow:update\",\"workflow:list\",\"workflow:activate\",\"workflow:deactivate\",\"execution:read\",\"execution:list\"],\"expiresAt\":$expires_at}")
+        -d "{\"label\":\"integration-test-key\",\"scopes\":[\"workflow:create\",\"workflow:delete\",\"workflow:read\",\"workflow:update\",\"workflow:list\",\"workflow:activate\",\"workflow:deactivate\",\"execution:read\",\"execution:list\",\"user:list\",\"project:list\"],\"expiresAt\":$expires_at}")
     
     # Extract raw API key from response
     N8N_API_KEY=$(echo "$api_key_response" | grep -o '"rawApiKey":"[^"]*"' | cut -d'"' -f4)

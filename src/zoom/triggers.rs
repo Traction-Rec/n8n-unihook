@@ -1,4 +1,4 @@
-use crate::n8n::{Workflow, WorkflowNode};
+use crate::n8n::{Workflow, WorkflowNode, WorkflowOwnerInfo};
 
 /// Extracted configuration from a Zoom Trigger node
 #[derive(Debug, Clone)]
@@ -17,6 +17,15 @@ pub struct ZoomTriggerConfig {
 
     /// The event types this trigger listens for (may include `"*"` for all allowlisted events)
     pub events: Vec<String>,
+
+    /// Email of the workflow owner (personal projects only)
+    pub owner_email: Option<String>,
+
+    /// n8n project ID that owns the workflow
+    pub project_id: String,
+
+    /// n8n project type (`personal` or `team`)
+    pub project_type: String,
 }
 
 /// n8n node type when installed as a community package (`nodes/node_modules/...`).
@@ -30,7 +39,11 @@ fn is_zoom_trigger_node(node_type: &str) -> bool {
 }
 
 /// Parse Zoom Trigger configuration from a workflow node
-pub fn parse_zoom_trigger(workflow: &Workflow, node: &WorkflowNode) -> Option<ZoomTriggerConfig> {
+pub fn parse_zoom_trigger(
+    workflow: &Workflow,
+    node: &WorkflowNode,
+    owner: &WorkflowOwnerInfo,
+) -> Option<ZoomTriggerConfig> {
     if !is_zoom_trigger_node(&node.node_type) {
         return None;
     }
@@ -55,6 +68,9 @@ pub fn parse_zoom_trigger(workflow: &Workflow, node: &WorkflowNode) -> Option<Zo
         workflow_name: workflow.name.clone(),
         workflow_active: workflow.active,
         events,
+        owner_email: owner.owner_email.clone(),
+        project_id: owner.project_id.clone(),
+        project_type: owner.project_type.clone(),
     })
 }
 
@@ -63,6 +79,14 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    fn test_owner() -> WorkflowOwnerInfo {
+        WorkflowOwnerInfo {
+            project_id: "proj1".to_string(),
+            project_type: "personal".to_string(),
+            owner_email: Some("owner@example.com".to_string()),
+        }
+    }
+
     fn create_workflow(id: &str, name: &str, nodes: Vec<WorkflowNode>) -> Workflow {
         Workflow {
             id: id.to_string(),
@@ -70,6 +94,7 @@ mod tests {
             active: true,
             nodes,
             static_data: None,
+            shared: vec![],
         }
     }
 
@@ -95,10 +120,11 @@ mod tests {
         );
         let workflow = create_workflow("wf1", "Zoom Workflow", vec![node.clone()]);
 
-        let config = parse_zoom_trigger(&workflow, &node).unwrap();
+        let config = parse_zoom_trigger(&workflow, &node, &test_owner()).unwrap();
 
         assert_eq!(config.webhook_id, "webhook-z1");
         assert_eq!(config.events, vec!["meeting.started"]);
+        assert_eq!(config.owner_email.as_deref(), Some("owner@example.com"));
     }
 
     #[test]
@@ -110,7 +136,7 @@ mod tests {
         );
         let workflow = create_workflow("wf2", "Multi Event", vec![node.clone()]);
 
-        let config = parse_zoom_trigger(&workflow, &node).unwrap();
+        let config = parse_zoom_trigger(&workflow, &node, &test_owner()).unwrap();
 
         assert_eq!(config.events, vec!["meeting.started", "meeting.ended"]);
     }
@@ -124,7 +150,7 @@ mod tests {
         );
         let workflow = create_workflow("wf3", "Wildcard", vec![node.clone()]);
 
-        let config = parse_zoom_trigger(&workflow, &node).unwrap();
+        let config = parse_zoom_trigger(&workflow, &node, &test_owner()).unwrap();
 
         assert_eq!(config.events, vec!["*"]);
     }
@@ -138,7 +164,7 @@ mod tests {
         );
         let workflow = create_workflow("wf4", "Custom Loader", vec![node.clone()]);
 
-        let config = parse_zoom_trigger(&workflow, &node).unwrap();
+        let config = parse_zoom_trigger(&workflow, &node, &test_owner()).unwrap();
 
         assert_eq!(config.webhook_id, "webhook-z4");
         assert_eq!(config.events, vec!["meeting.started", "meeting.ended"]);
@@ -154,7 +180,7 @@ mod tests {
         };
         let workflow = create_workflow("wf1", "Workflow", vec![node.clone()]);
 
-        assert!(parse_zoom_trigger(&workflow, &node).is_none());
+        assert!(parse_zoom_trigger(&workflow, &node, &test_owner()).is_none());
     }
 
     #[test]
@@ -166,6 +192,6 @@ mod tests {
         );
         let workflow = create_workflow("wf1", "Workflow", vec![node.clone()]);
 
-        assert!(parse_zoom_trigger(&workflow, &node).is_none());
+        assert!(parse_zoom_trigger(&workflow, &node, &test_owner()).is_none());
     }
 }

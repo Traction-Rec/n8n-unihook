@@ -51,6 +51,16 @@ pub struct Config {
     /// Events not listed are acknowledged to Zoom but not routed to n8n.
     #[serde(deserialize_with = "deserialize_comma_separated")]
     pub zoom_allowed_events: Vec<String>,
+
+    /// Comma-separated emails of n8n users whose personal-project Zoom workflows
+    /// receive all allowlisted events (bypasses host-based routing).
+    #[serde(default, deserialize_with = "deserialize_comma_separated_optional")]
+    pub zoom_privileged_users: Vec<String>,
+
+    /// Comma-separated n8n workflow IDs whose Zoom triggers receive all
+    /// allowlisted events (bypasses host-based routing).
+    #[serde(default, deserialize_with = "deserialize_comma_separated_optional")]
+    pub zoom_privileged_workflow_ids: Vec<String>,
 }
 
 fn deserialize_comma_separated<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
@@ -58,6 +68,14 @@ where
     D: Deserializer<'de>,
 {
     let raw = String::deserialize(deserializer)?;
+    Ok(parse_comma_separated(&raw))
+}
+
+fn deserialize_comma_separated_optional<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let raw = Option::<String>::deserialize(deserializer)?.unwrap_or_default();
     Ok(parse_comma_separated(&raw))
 }
 
@@ -104,6 +122,24 @@ impl Config {
     pub fn is_zoom_event_allowed(&self, event: &str) -> bool {
         self.zoom_allowed_events.iter().any(|e| e == event)
     }
+
+    /// Lowercase emails from `ZOOM_PRIVILEGED_USERS` for host-routing bypass lookups.
+    pub fn zoom_privileged_user_emails(&self) -> std::collections::HashSet<String> {
+        self.zoom_privileged_users
+            .iter()
+            .map(|e| e.trim().to_lowercase())
+            .filter(|e| !e.is_empty())
+            .collect()
+    }
+
+    /// Workflow IDs from `ZOOM_PRIVILEGED_WORKFLOW_IDS` for host-routing bypass lookups.
+    pub fn zoom_privileged_workflow_ids(&self) -> std::collections::HashSet<String> {
+        self.zoom_privileged_workflow_ids
+            .iter()
+            .map(|id| id.trim().to_string())
+            .filter(|id| !id.is_empty())
+            .collect()
+    }
 }
 
 #[cfg(test)]
@@ -120,6 +156,8 @@ impl Config {
             database_path: ":memory:".to_string(),
             zoom_webhook_secret: "test-zoom-secret".to_string(),
             zoom_allowed_events: vec!["meeting.started".to_string()],
+            zoom_privileged_users: vec![],
+            zoom_privileged_workflow_ids: vec![],
         }
     }
 }

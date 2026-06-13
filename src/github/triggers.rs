@@ -147,6 +147,7 @@ mod tests {
             active: true,
             nodes,
             static_data: None,
+            shared: vec![],
         }
     }
 
