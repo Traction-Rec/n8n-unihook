@@ -126,6 +126,8 @@ cargo run
 | `GITHUB_WEBHOOK_SECRET` | No | - | Shared secret for verifying inbound GitHub webhooks (HMAC-SHA256 via `X-Hub-Signature-256`) |
 | `ZOOM_WEBHOOK_SECRET` | Yes | - | Zoom app Secret Token for URL validation and inbound signature verification |
 | `ZOOM_ALLOWED_EVENTS` | Yes | - | Comma-separated Zoom event types Unihook may forward (platform allowlist) |
+| `ZOOM_PRIVILEGED_USERS` | No | - | Comma-separated emails whose personal-project Zoom workflows receive all allowlisted events (bypasses host routing) |
+| `ZOOM_PRIVILEGED_WORKFLOW_IDS` | No | - | Comma-separated n8n workflow IDs whose Zoom triggers receive all allowlisted events (bypasses host routing; use for team-project admin catch-alls) |
 | `RUST_LOG` | No | `n8n_slack_unihook=info` | Log level |
 
 ## Setting Up Slack
@@ -394,23 +396,31 @@ Zoom differs from Slack: webhook delivery is **app-level**, not bot-scoped. A pr
 3. **Create n8n workflows** with Zoom Trigger nodes:
    - Install `n8n-nodes-unihook-zoom-trigger`
    - Select event types (or `*` for all allowlisted events)
-   - Add a **Zoom Trigger API** credential with the same Secret Token as `ZOOM_WEBHOOK_SECRET`
-   - Activate the workflow
+   - Activate the workflow (prefer **personal projects** so host routing can resolve the workflow owner)
 
-4. **For workflows that call Zoom APIs**: attach n8n's Zoom OAuth credential to downstream action nodes (separate from the webhook secret)
+4. **For workflows that call Zoom APIs**: attach n8n's Zoom OAuth credential to downstream action nodes
+
+5. **Optional admin catch-alls**:
+   - `ZOOM_PRIVILEGED_USERS=admin@company.com` — all Zoom workflows in that user's personal project receive every allowlisted event
+   - `ZOOM_PRIVILEGED_WORKFLOW_IDS=abc123` — named workflows receive every allowlisted event (for team-project catch-alls)
 
 > **Note:** Like Slack, the Zoom Trigger node does not call the Zoom API during workflow activation — no provider API mock is needed.
 
+> **API key scopes:** The Unihook service API key needs `workflow:list`, `user:list`, and `project:list` to resolve workflow owner emails for host routing.
+
 ### Zoom Routing
 
-Unihook discovers workflows with `n8n-nodes-unihook-zoom-trigger.zoomTrigger` nodes and extracts the `event` parameter (array of event types, or `*`).
+Unihook discovers workflows with `n8n-nodes-unihook-zoom-trigger.zoomTrigger` (or `CUSTOM.zoomTrigger`) nodes and extracts the `event` parameter (array of event types, or `*`).
 
 When an event arrives:
 
 1. Verify `x-zm-signature` using `ZOOM_WEBHOOK_SECRET`
 2. Drop events not on `ZOOM_ALLOWED_EVENTS` (200 to Zoom, not forwarded)
-3. Match remaining events against trigger configurations
-4. Forward raw body and `x-zm-*` headers to matching n8n webhooks
+3. Match remaining events against trigger configurations (event type / wildcard)
+4. **Host filter:** forward only when `payload.object.host_email` (or `meeting_host_email`) matches the workflow owner's n8n email, unless the trigger is on a privileged allowlist
+5. Forward raw body and `x-zm-*` headers to matching n8n webhooks
+
+Events without a host field are forwarded only to privileged triggers (not to regular employee workflows).
 
 ### Authorization model
 
@@ -418,10 +428,15 @@ When an event arrives:
 |-------|----------|
 | Zoom admin subscription | Which events Zoom sends; receiver scope (account vs users who installed app) |
 | Unihook `ZOOM_ALLOWED_EVENTS` | Which event types are forwarded (ingress gate) |
+| Unihook host routing | Personal-project workflows receive only meetings they hosted (`host_email` match) |
+| `ZOOM_PRIVILEGED_USERS` | Named owner emails receive all allowlisted events in their personal workflows |
+| `ZOOM_PRIVILEGED_WORKFLOW_IDS` | Named workflow IDs receive all allowlisted events (team-project admin catch-alls) |
 | Zoom Trigger `event` parameter | Which forwarded events start each workflow |
 | n8n Zoom OAuth on action nodes | What API operations a workflow can perform |
 
-**Why OAuth on the trigger does not replace the allowlist:** Zoom POSTs to the app endpoint regardless of which n8n user owns a workflow. Per-user OAuth in n8n limits API actions after receipt, not webhook delivery. For a shared privileged app, `ZOOM_ALLOWED_EVENTS` is the correct ingress control.
+**Why host routing matters:** `recording.completed` includes sensitive fields (share password, download token). Without host routing, any employee with a Zoom trigger workflow could receive recordings from meetings they did not host.
+
+**Team projects:** n8n does not expose per-user workflow creators for team projects. Host routing does not apply; use `ZOOM_PRIVILEGED_WORKFLOW_IDS` only for intentional admin workflows.
 
 ### Wildcard (`*`)
 

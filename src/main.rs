@@ -56,7 +56,15 @@ async fn main() {
             eprintln!(
                 "  ZOOM_WEBHOOK_SECRET      - Zoom app Secret Token for signature verification"
             );
-            eprintln!("  ZOOM_ALLOWED_EVENTS    - Comma-separated Zoom events Unihook may forward");
+            eprintln!(
+                "  ZOOM_ALLOWED_EVENTS      - Comma-separated Zoom events Unihook may forward"
+            );
+            eprintln!(
+                "  ZOOM_PRIVILEGED_USERS    - Optional comma-separated emails bypassing Zoom host routing"
+            );
+            eprintln!(
+                "  ZOOM_PRIVILEGED_WORKFLOW_IDS - Optional comma-separated workflow IDs bypassing Zoom host routing"
+            );
             eprintln!("  DATABASE_PATH            - Path to SQLite database (default: unihook.db)");
             std::process::exit(1);
         }

@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-06-12
+
+### Added
+
+- Zoom host-based routing: personal-project workflows receive events only when `host_email` matches the workflow owner's n8n email
+- `ZOOM_PRIVILEGED_USERS` — comma-separated emails bypassing host routing for personal-project workflows
+- `ZOOM_PRIVILEGED_WORKFLOW_IDS` — comma-separated workflow IDs bypassing host routing (team-project admin catch-alls)
+- Workflow owner resolution via n8n `shared` metadata and `GET /api/v1/projects/{id}/users`
+
+### Security
+
+- Prevents cross-user leakage of sensitive Zoom payloads (e.g. `recording.completed` share passwords) to unrelated employee workflows
+
 ## [0.5.1] - 2026-06-12
 
 ### Fixed

@@ -19,6 +19,8 @@ services:
       # Zoom webhook configuration (required)
       - ZOOM_WEBHOOK_SECRET=${ZOOM_WEBHOOK_SECRET}
       - ZOOM_ALLOWED_EVENTS=${ZOOM_ALLOWED_EVENTS}
+      - ZOOM_PRIVILEGED_USERS=${ZOOM_PRIVILEGED_USERS:-}
+      - ZOOM_PRIVILEGED_WORKFLOW_IDS=${ZOOM_PRIVILEGED_WORKFLOW_IDS:-}
       # Log level
       - RUST_LOG=${RUST_LOG:-slack_unihook=info}
     networks:

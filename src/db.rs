@@ -44,9 +44,15 @@ pub struct JiraTriggerRow {
 /// A Zoom trigger row from the database.
 pub struct ZoomTriggerRow {
     pub webhook_id: String,
+    pub workflow_id: String,
     pub workflow_name: String,
     pub workflow_active: bool,
     pub events: Vec<String>,
+    pub owner_email: Option<String>,
+    /// Stored for diagnostics and future routing policies.
+    #[allow(dead_code)]
+    pub project_id: String,
+    pub project_type: String,
 }
 
 /// A Slack trigger row from the database.
@@ -125,10 +131,31 @@ impl Database {
                 workflow_name TEXT NOT NULL,
                 workflow_active BOOLEAN NOT NULL DEFAULT 0,
                 events TEXT NOT NULL DEFAULT '[]',
+                owner_email TEXT,
+                project_id TEXT NOT NULL DEFAULT '',
+                project_type TEXT NOT NULL DEFAULT '',
                 updated_at TEXT DEFAULT (datetime('now'))
             );
             ",
         )?;
+        Self::apply_zoom_trigger_migrations(&conn)?;
+        Ok(())
+    }
+
+    fn apply_zoom_trigger_migrations(conn: &rusqlite::Connection) -> Result<(), rusqlite::Error> {
+        let migrations = [
+            "ALTER TABLE zoom_triggers ADD COLUMN owner_email TEXT",
+            "ALTER TABLE zoom_triggers ADD COLUMN project_id TEXT NOT NULL DEFAULT ''",
+            "ALTER TABLE zoom_triggers ADD COLUMN project_type TEXT NOT NULL DEFAULT ''",
+        ];
+        for sql in migrations {
+            if let Err(e) = conn.execute(sql, []) {
+                let msg = e.to_string();
+                if !msg.contains("duplicate column name") {
+                    return Err(e);
+                }
+            }
+        }
         Ok(())
     }
 
@@ -476,8 +503,9 @@ impl Database {
         {
             let mut stmt = tx.prepare(
                 "INSERT INTO zoom_triggers \
-                 (webhook_id, workflow_id, workflow_name, workflow_active, events) \
-                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                 (webhook_id, workflow_id, workflow_name, workflow_active, events, \
+                  owner_email, project_id, project_type) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             )?;
             for t in &triggers {
                 let events_json =
@@ -488,6 +516,9 @@ impl Database {
                     t.workflow_name,
                     t.workflow_active,
                     events_json,
+                    t.owner_email,
+                    t.project_id,
+                    t.project_type,
                 ])?;
             }
         }
@@ -500,18 +531,23 @@ impl Database {
     pub fn query_zoom_triggers(&self) -> Result<Vec<ZoomTriggerRow>, rusqlite::Error> {
         let conn = self.conn.lock();
         let mut stmt = conn.prepare(
-            "SELECT webhook_id, workflow_name, workflow_active, events \
+            "SELECT webhook_id, workflow_id, workflow_name, workflow_active, events, \
+                    owner_email, project_id, project_type \
              FROM zoom_triggers",
         )?;
         let rows = stmt
             .query_map([], |row| {
-                let events_json: String = row.get(3)?;
+                let events_json: String = row.get(4)?;
                 let events: Vec<String> = serde_json::from_str(&events_json).unwrap_or_default();
                 Ok(ZoomTriggerRow {
                     webhook_id: row.get(0)?,
-                    workflow_name: row.get(1)?,
-                    workflow_active: row.get(2)?,
+                    workflow_id: row.get(1)?,
+                    workflow_name: row.get(2)?,
+                    workflow_active: row.get(3)?,
                     events,
+                    owner_email: row.get(5)?,
+                    project_id: row.get(6)?,
+                    project_type: row.get(7)?,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -841,23 +877,32 @@ mod tests {
 
     // ── zoom_triggers tests ─────────────────────────────────────────────
 
+    fn sample_zoom_trigger(webhook_id: &str, workflow_id: &str, name: &str) -> ZoomTriggerConfig {
+        ZoomTriggerConfig {
+            webhook_id: webhook_id.to_string(),
+            workflow_id: workflow_id.to_string(),
+            workflow_name: name.to_string(),
+            workflow_active: true,
+            events: vec!["meeting.started".to_string()],
+            owner_email: Some("owner@example.com".to_string()),
+            project_id: "proj1".to_string(),
+            project_type: "personal".to_string(),
+        }
+    }
+
     #[test]
     fn test_sync_and_query_zoom_triggers() {
         let db = open_memory_db();
 
-        let triggers = vec![ZoomTriggerConfig {
-            webhook_id: "zh1".to_string(),
-            workflow_id: "wf1".to_string(),
-            workflow_name: "Zoom Test".to_string(),
-            workflow_active: true,
-            events: vec!["meeting.started".to_string()],
-        }];
+        let triggers = vec![sample_zoom_trigger("zh1", "wf1", "Zoom Test")];
         db.sync_zoom_triggers(&triggers).unwrap();
 
         let rows = db.query_zoom_triggers().unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].webhook_id, "zh1");
         assert_eq!(rows[0].events, vec!["meeting.started"]);
+        assert_eq!(rows[0].owner_email.as_deref(), Some("owner@example.com"));
+        assert_eq!(rows[0].project_type, "personal");
     }
 
     #[test]
@@ -871,6 +916,9 @@ mod tests {
                 workflow_name: "Inactive dup".to_string(),
                 workflow_active: false,
                 events: vec!["meeting.started".to_string()],
+                owner_email: None,
+                project_id: String::new(),
+                project_type: String::new(),
             },
             ZoomTriggerConfig {
                 webhook_id: "same".to_string(),
@@ -878,6 +926,9 @@ mod tests {
                 workflow_name: "Active dup".to_string(),
                 workflow_active: true,
                 events: vec!["*".to_string()],
+                owner_email: Some("owner@example.com".to_string()),
+                project_id: "proj1".to_string(),
+                project_type: "personal".to_string(),
             },
         ];
         db.sync_zoom_triggers(&triggers).unwrap();

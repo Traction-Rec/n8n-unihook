@@ -3,6 +3,7 @@
 use crate::common::{
     TEST_ZOOM_WEBHOOK_SECRET, TestEnvironment, UNIHOOK_URL, compute_zoom_signature,
     compute_zoom_url_validation_token, create_zoom_meeting_started_payload,
+    create_zoom_meeting_started_payload_no_host, create_zoom_meeting_started_payload_wrong_host,
     create_zoom_recording_completed_payload, create_zoom_url_validation_payload,
     create_zoom_user_updated_payload, get_execution_count, load_workflow, wait_for_execution,
 };
@@ -202,6 +203,72 @@ async fn test_zoom_disallowed_event_not_forwarded() {
     assert_eq!(
         final_count, initial_count,
         "Expected disallowed event not to trigger workflow even with wildcard"
+    );
+
+    env.cleanup_workflow(&created.id)
+        .await
+        .expect("Failed to cleanup workflow");
+}
+
+#[tokio::test]
+async fn test_zoom_host_mismatch_does_not_trigger() {
+    let env = TestEnvironment::new(false)
+        .await
+        .expect("Failed to create test environment");
+
+    let workflow = load_workflow("zoom_meeting_started_trigger");
+    let created = env
+        .setup_workflow(&workflow)
+        .await
+        .expect("Failed to setup workflow");
+
+    let initial_count = get_execution_count(&env, &created.id).await;
+    let payload = create_zoom_meeting_started_payload_wrong_host();
+    let response = env
+        .send_zoom_event(&payload)
+        .await
+        .expect("Failed to send event");
+
+    assert!(response.status().is_success());
+
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    let final_count = get_execution_count(&env, &created.id).await;
+    assert_eq!(
+        final_count, initial_count,
+        "Expected no execution when host email does not match workflow owner"
+    );
+
+    env.cleanup_workflow(&created.id)
+        .await
+        .expect("Failed to cleanup workflow");
+}
+
+#[tokio::test]
+async fn test_zoom_missing_host_does_not_trigger() {
+    let env = TestEnvironment::new(false)
+        .await
+        .expect("Failed to create test environment");
+
+    let workflow = load_workflow("zoom_meeting_started_trigger");
+    let created = env
+        .setup_workflow(&workflow)
+        .await
+        .expect("Failed to setup workflow");
+
+    let initial_count = get_execution_count(&env, &created.id).await;
+    let payload = create_zoom_meeting_started_payload_no_host();
+    let response = env
+        .send_zoom_event(&payload)
+        .await
+        .expect("Failed to send event");
+
+    assert!(response.status().is_success());
+
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    let final_count = get_execution_count(&env, &created.id).await;
+    assert_eq!(
+        final_count, initial_count,
+        "Expected no execution when event has no host email and owner is not privileged"
     );
 
     env.cleanup_workflow(&created.id)

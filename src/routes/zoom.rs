@@ -7,7 +7,9 @@ use std::sync::Arc;
 use tracing::{debug, info, warn};
 
 use crate::crypto::{compute_zoom_url_validation_token, verify_zoom_webhook_signature};
-use crate::zoom::{UrlValidationResponse, ZoomWebhookPayload, extract_plain_token};
+use crate::zoom::{
+    UrlValidationResponse, ZoomWebhookPayload, extract_host_email, extract_plain_token,
+};
 
 use super::{AppState, extract_forwarded_headers};
 
@@ -70,11 +72,16 @@ pub async fn handle_zoom_event(
 
     info!(event = %payload.event, "Received Zoom event");
 
+    let host_email = extract_host_email(&serde_json::json!({
+        "payload": payload.payload,
+    }));
     let forwarded_headers = extract_forwarded_headers(&headers, ZOOM_FORWARDED_HEADER_PREFIXES);
     let router = state.zoom_router.clone();
     let event = payload.event.clone();
     tokio::spawn(async move {
-        router.route_event(&event, body, forwarded_headers).await;
+        router
+            .route_event(&event, host_email.as_deref(), body, forwarded_headers)
+            .await;
     });
 
     StatusCode::OK.into_response()

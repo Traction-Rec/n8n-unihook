@@ -6,6 +6,9 @@ use serde_json::{Value, json};
 /// Must match ZOOM_WEBHOOK_SECRET in docker-compose.test.yml and run-integration-tests.sh.
 pub const TEST_ZOOM_WEBHOOK_SECRET: &str = "test-zoom-webhook-secret-for-integration-tests";
 
+/// Host email matching the n8n test owner (scripts/run-integration-tests.sh).
+pub const TEST_ZOOM_HOST_EMAIL: &str = "test@example.com";
+
 /// Compute a Zoom webhook signature in `v0=<hex>` format.
 pub fn compute_zoom_signature(secret: &str, timestamp: &str, body: &str) -> String {
     use hmac::{Hmac, Mac};
@@ -38,6 +41,50 @@ pub fn create_zoom_meeting_started_payload() -> Value {
                 "id": "123456789",
                 "uuid": "test-meeting-uuid",
                 "host_id": "host-123",
+                "host_email": TEST_ZOOM_HOST_EMAIL,
+                "topic": "Test Meeting",
+                "type": 2,
+                "start_time": "2024-01-01T10:00:00Z",
+                "duration": 60,
+                "timezone": "UTC"
+            }
+        }
+    })
+}
+
+/// Create a Zoom meeting.started payload with a non-matching host email
+pub fn create_zoom_meeting_started_payload_wrong_host() -> Value {
+    json!({
+        "event": "meeting.started",
+        "event_ts": 1234567890000i64,
+        "payload": {
+            "account_id": "test-account",
+            "object": {
+                "id": "123456789",
+                "uuid": "test-meeting-uuid",
+                "host_id": "host-456",
+                "host_email": "other@example.com",
+                "topic": "Test Meeting",
+                "type": 2,
+                "start_time": "2024-01-01T10:00:00Z",
+                "duration": 60,
+                "timezone": "UTC"
+            }
+        }
+    })
+}
+
+/// Create a Zoom meeting.started payload without a host email field
+pub fn create_zoom_meeting_started_payload_no_host() -> Value {
+    json!({
+        "event": "meeting.started",
+        "event_ts": 1234567890000i64,
+        "payload": {
+            "account_id": "test-account",
+            "object": {
+                "id": "123456789",
+                "uuid": "test-meeting-uuid",
+                "host_id": "host-123",
                 "topic": "Test Meeting",
                 "type": 2,
                 "start_time": "2024-01-01T10:00:00Z",
@@ -59,6 +106,7 @@ pub fn create_zoom_recording_completed_payload() -> Value {
                 "uuid": "test-meeting-uuid",
                 "id": 123456789,
                 "host_id": "host-123",
+                "host_email": TEST_ZOOM_HOST_EMAIL,
                 "topic": "Test Meeting"
             }
         }
