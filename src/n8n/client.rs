@@ -1,7 +1,9 @@
 use crate::config::Config;
 use crate::github::triggers::{GitHubTriggerConfig, parse_github_trigger};
 use crate::jira::triggers::{JiraTriggerConfig, parse_jira_trigger};
-use crate::n8n::models::{ProjectMembersResponse, ProjectMember, UsersResponse, WorkflowOwnerInfo, WorkflowsResponse};
+use crate::n8n::models::{
+    ProjectMember, ProjectMembersResponse, UsersResponse, WorkflowOwnerInfo, WorkflowsResponse,
+};
 use crate::slack::triggers::{SlackTriggerConfig, parse_slack_trigger};
 use crate::zoom::triggers::{ZoomTriggerConfig, parse_zoom_trigger};
 use axum::http::HeaderMap;
