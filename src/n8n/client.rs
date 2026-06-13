@@ -162,12 +162,12 @@ impl N8nClient {
             "Workflow list response missing shared metadata; refetching workflow"
         );
 
-        if let Ok(full) = self.fetch_workflow_by_id(&workflow.id).await {
-            if let Some((project_id, project_type)) = full.owner_project() {
-                return self
-                    .build_workflow_owner_info(project_id, project_type, project_owner_cache)
-                    .await;
-            }
+        if let Ok(full) = self.fetch_workflow_by_id(&workflow.id).await
+            && let Some((project_id, project_type)) = full.owner_project()
+        {
+            return self
+                .build_workflow_owner_info(project_id, project_type, project_owner_cache)
+                .await;
         }
 
         warn!(
