@@ -374,7 +374,7 @@ Zoom differs from Slack: webhook delivery is **app-level**, not bot-scoped. A pr
 
 ### Prerequisites
 
-- Install the community node [`n8n-nodes-unihook-zoom-trigger`](https://github.com/tractionrec/n8n-nodes-unihook-zoom-trigger) in n8n
+- Install the community node [`n8n-nodes-unihook-zoom-trigger`](https://github.com/Traction-Rec/n8n-nodes-unihook-zoom-trigger) in n8n
 - Deploy Unihook with `ZOOM_WEBHOOK_SECRET` and `ZOOM_ALLOWED_EVENTS`
 
 ### Steps

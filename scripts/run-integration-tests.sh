@@ -117,7 +117,7 @@ build_zoom_trigger_node() {
         log_step "Cloning Zoom trigger node repository..."
         zoom_node_dir="/tmp/n8n-nodes-unihook-zoom-trigger"
         rm -rf "$zoom_node_dir"
-        git clone --depth 1 "${ZOOM_NODE_REPO:-https://github.com/tractionrec/n8n-nodes-unihook-zoom-trigger.git}" "$zoom_node_dir"
+        git clone --depth 1 "${ZOOM_NODE_REPO:-https://github.com/Traction-Rec/n8n-nodes-unihook-zoom-trigger.git}" "$zoom_node_dir"
     fi
 
     log_step "Building Zoom trigger node in $zoom_node_dir..."
