@@ -66,7 +66,17 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      # Required to build the custom Zoom trigger node before mounting it into test n8n.
+      # Node 22 aligns with current n8n engine requirements (>=22).
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
       - name: Run integration tests
+        env:
+          # Clone URL for the Zoom trigger node when the sibling repo is not present (CI).
+          ZOOM_NODE_REPO: https://github.com/Traction-Rec/n8n-nodes-unihook-zoom-trigger.git
         run: ./scripts/run-integration-tests.sh
 
   # Check if version changed (for release workflow trigger)

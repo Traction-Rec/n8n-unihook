@@ -7,6 +7,7 @@ mod n8n;
 mod router;
 mod routes;
 mod slack;
+mod zoom;
 
 use axum::{Router as AxumRouter, routing::get, routing::post};
 use std::sync::Arc;
@@ -16,10 +17,10 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use crate::config::Config;
 use crate::db::Database;
 use crate::n8n::N8nClient;
-use crate::router::{GitHubRouter, JiraRouter, SlackRouter};
+use crate::router::{GitHubRouter, JiraRouter, SlackRouter, ZoomRouter};
 use crate::routes::{
-    AppState, handle_github_event, handle_jira_event, handle_slack_event, health_check,
-    provider_github, provider_jira,
+    AppState, handle_github_event, handle_jira_event, handle_slack_event, handle_zoom_event,
+    health_check, provider_github, provider_jira,
 };
 
 #[tokio::main]
@@ -52,6 +53,10 @@ async fn main() {
             eprintln!(
                 "  GITHUB_WEBHOOK_SECRET    - Shared secret for GitHub inbound HMAC verification"
             );
+            eprintln!(
+                "  ZOOM_WEBHOOK_SECRET      - Zoom app Secret Token for signature verification"
+            );
+            eprintln!("  ZOOM_ALLOWED_EVENTS    - Comma-separated Zoom events Unihook may forward");
             eprintln!("  DATABASE_PATH            - Path to SQLite database (default: unihook.db)");
             std::process::exit(1);
         }
@@ -102,16 +107,24 @@ async fn main() {
         db.clone(),
     ));
 
+    let zoom_router = Arc::new(ZoomRouter::new(
+        config.clone(),
+        n8n_client.clone(),
+        db.clone(),
+    ));
+
     // Start background tasks that refresh trigger configurations
     slack_router.clone().start_refresh_task();
     jira_router.clone().start_refresh_task();
     github_router.clone().start_refresh_task();
+    zoom_router.clone().start_refresh_task();
 
     // Create application state
     let app_state = Arc::new(AppState {
         slack_router,
         jira_router,
         github_router,
+        zoom_router,
         config: config.clone(),
         db: db.clone(),
     });
@@ -122,6 +135,7 @@ async fn main() {
         .route("/slack/events", post(handle_slack_event))
         .route("/jira/events", post(handle_jira_event))
         .route("/github/events", post(handle_github_event))
+        .route("/zoom/events", post(handle_zoom_event))
         // ── Provider API mock routes (intercepting n8n → provider calls) ─
         // GitHub API mock
         .route(
@@ -156,6 +170,7 @@ async fn main() {
     info!("Slack webhook URL: http://<your-host>/slack/events");
     info!("Jira webhook URL: http://<your-host>/jira/events");
     info!("GitHub webhook URL: http://<your-host>/github/events");
+    info!("Zoom webhook URL: http://<your-host>/zoom/events");
     info!("Provider API mock: http://<your-host>/repos/:owner/:repo/hooks (GitHub)");
     info!("Provider API mock: http://<your-host>/rest/webhooks/1.0/webhook (Jira)");
 

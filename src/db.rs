@@ -6,6 +6,7 @@ use tracing::{debug, info, warn};
 use crate::github::GitHubTriggerConfig;
 use crate::jira::JiraTriggerConfig;
 use crate::slack::SlackTriggerConfig;
+use crate::zoom::ZoomTriggerConfig;
 
 /// Lightweight SQLite-backed store for webhook secrets and trigger metadata.
 ///
@@ -34,6 +35,14 @@ pub struct GitHubTriggerRow {
 
 /// A Jira trigger row from the database.
 pub struct JiraTriggerRow {
+    pub webhook_id: String,
+    pub workflow_name: String,
+    pub workflow_active: bool,
+    pub events: Vec<String>,
+}
+
+/// A Zoom trigger row from the database.
+pub struct ZoomTriggerRow {
     pub webhook_id: String,
     pub workflow_name: String,
     pub workflow_active: bool,
@@ -107,6 +116,15 @@ impl Database {
                 event_type TEXT NOT NULL DEFAULT '',
                 channels TEXT NOT NULL DEFAULT '[]',
                 watch_whole_workspace BOOLEAN NOT NULL DEFAULT 0,
+                updated_at TEXT DEFAULT (datetime('now'))
+            );
+
+            CREATE TABLE IF NOT EXISTS zoom_triggers (
+                webhook_id TEXT PRIMARY KEY,
+                workflow_id TEXT NOT NULL,
+                workflow_name TEXT NOT NULL,
+                workflow_active BOOLEAN NOT NULL DEFAULT 0,
+                events TEXT NOT NULL DEFAULT '[]',
                 updated_at TEXT DEFAULT (datetime('now'))
             );
             ",
@@ -443,6 +461,70 @@ impl Database {
             conn.query_row("SELECT COUNT(*) FROM slack_triggers", [], |row| row.get(0))?;
         Ok(count as usize)
     }
+
+    // ── Zoom triggers ───────────────────────────────────────────────────
+
+    /// Replace all Zoom trigger rows with the supplied set.
+    pub fn sync_zoom_triggers(
+        &self,
+        triggers: &[ZoomTriggerConfig],
+    ) -> Result<(), rusqlite::Error> {
+        let triggers = dedupe_zoom_triggers(triggers);
+        let mut conn = self.conn.lock();
+        let tx = conn.transaction()?;
+        tx.execute("DELETE FROM zoom_triggers", [])?;
+        {
+            let mut stmt = tx.prepare(
+                "INSERT INTO zoom_triggers \
+                 (webhook_id, workflow_id, workflow_name, workflow_active, events) \
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+            )?;
+            for t in &triggers {
+                let events_json =
+                    serde_json::to_string(&t.events).unwrap_or_else(|_| "[]".to_string());
+                stmt.execute(rusqlite::params![
+                    t.webhook_id,
+                    t.workflow_id,
+                    t.workflow_name,
+                    t.workflow_active,
+                    events_json,
+                ])?;
+            }
+        }
+        tx.commit()?;
+        debug!(count = triggers.len(), "Synced Zoom triggers to database");
+        Ok(())
+    }
+
+    /// Query all Zoom triggers.
+    pub fn query_zoom_triggers(&self) -> Result<Vec<ZoomTriggerRow>, rusqlite::Error> {
+        let conn = self.conn.lock();
+        let mut stmt = conn.prepare(
+            "SELECT webhook_id, workflow_name, workflow_active, events \
+             FROM zoom_triggers",
+        )?;
+        let rows = stmt
+            .query_map([], |row| {
+                let events_json: String = row.get(3)?;
+                let events: Vec<String> = serde_json::from_str(&events_json).unwrap_or_default();
+                Ok(ZoomTriggerRow {
+                    webhook_id: row.get(0)?,
+                    workflow_name: row.get(1)?,
+                    workflow_active: row.get(2)?,
+                    events,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    /// Count the total number of Zoom trigger rows.
+    pub fn count_zoom_triggers(&self) -> Result<usize, rusqlite::Error> {
+        let conn = self.conn.lock();
+        let count: i64 =
+            conn.query_row("SELECT COUNT(*) FROM zoom_triggers", [], |row| row.get(0))?;
+        Ok(count as usize)
+    }
 }
 
 fn dedupe_slack_triggers(triggers: &[SlackTriggerConfig]) -> Vec<SlackTriggerConfig> {
@@ -487,6 +569,21 @@ fn dedupe_jira_triggers(triggers: &[JiraTriggerConfig]) -> Vec<JiraTriggerConfig
             )
         },
         "Jira",
+    )
+}
+
+fn dedupe_zoom_triggers(triggers: &[ZoomTriggerConfig]) -> Vec<ZoomTriggerConfig> {
+    dedupe_by_webhook_id(
+        triggers.to_vec(),
+        |t| {
+            (
+                t.webhook_id.clone(),
+                t.workflow_active,
+                t.workflow_id.clone(),
+                t.workflow_name.clone(),
+            )
+        },
+        "Zoom",
     )
 }
 
@@ -740,6 +837,55 @@ mod tests {
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].webhook_id, "jh1");
         assert_eq!(rows[0].events, vec!["jira:issue_created"]);
+    }
+
+    // ── zoom_triggers tests ─────────────────────────────────────────────
+
+    #[test]
+    fn test_sync_and_query_zoom_triggers() {
+        let db = open_memory_db();
+
+        let triggers = vec![ZoomTriggerConfig {
+            webhook_id: "zh1".to_string(),
+            workflow_id: "wf1".to_string(),
+            workflow_name: "Zoom Test".to_string(),
+            workflow_active: true,
+            events: vec!["meeting.started".to_string()],
+        }];
+        db.sync_zoom_triggers(&triggers).unwrap();
+
+        let rows = db.query_zoom_triggers().unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].webhook_id, "zh1");
+        assert_eq!(rows[0].events, vec!["meeting.started"]);
+    }
+
+    #[test]
+    fn test_sync_zoom_triggers_dedupes_duplicate_webhook_id() {
+        let db = open_memory_db();
+
+        let triggers = vec![
+            ZoomTriggerConfig {
+                webhook_id: "same".to_string(),
+                workflow_id: "wf-inactive".to_string(),
+                workflow_name: "Inactive dup".to_string(),
+                workflow_active: false,
+                events: vec!["meeting.started".to_string()],
+            },
+            ZoomTriggerConfig {
+                webhook_id: "same".to_string(),
+                workflow_id: "wf-active".to_string(),
+                workflow_name: "Active dup".to_string(),
+                workflow_active: true,
+                events: vec!["*".to_string()],
+            },
+        ];
+        db.sync_zoom_triggers(&triggers).unwrap();
+
+        let rows = db.query_zoom_triggers().unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].workflow_name, "Active dup");
+        assert_eq!(rows[0].events, vec!["*"]);
     }
 
     // ── slack_triggers tests ────────────────────────────────────────────

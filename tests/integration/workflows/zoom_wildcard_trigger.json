@@ -1,0 +1,40 @@
+{
+  "name": "Test Zoom Wildcard Trigger",
+  "nodes": [
+    {
+      "parameters": {
+        "event": ["*"]
+      },
+      "id": "zoom-trigger-1",
+      "name": "Zoom Trigger",
+      "type": "n8n-nodes-unihook-zoom-trigger.zoomTrigger",
+      "typeVersion": 1,
+      "position": [250, 300],
+      "webhookId": "placeholder"
+    },
+    {
+      "parameters": {},
+      "id": "noop-1",
+      "name": "No Operation",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [450, 300]
+    }
+  ],
+  "connections": {
+    "Zoom Trigger": {
+      "main": [
+        [
+          {
+            "node": "No Operation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

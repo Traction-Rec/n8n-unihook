@@ -3,14 +3,16 @@ pub mod jira;
 pub mod provider_github;
 pub mod provider_jira;
 pub mod slack;
+pub mod zoom;
 
 pub use github::handle_github_event;
 pub use jira::handle_jira_event;
 pub use slack::handle_slack_event;
+pub use zoom::handle_zoom_event;
 
 use crate::config::Config;
 use crate::db::Database;
-use crate::router::{GitHubRouter, JiraRouter, SlackRouter};
+use crate::router::{GitHubRouter, JiraRouter, SlackRouter, ZoomRouter};
 use axum::{
     extract::State,
     http::HeaderMap,
@@ -23,6 +25,7 @@ pub struct AppState {
     pub slack_router: Arc<SlackRouter>,
     pub jira_router: Arc<JiraRouter>,
     pub github_router: Arc<GitHubRouter>,
+    pub zoom_router: Arc<ZoomRouter>,
     pub config: Arc<Config>,
     pub db: Arc<Database>,
 }
@@ -51,11 +54,13 @@ pub async fn health_check(State(state): State<Arc<AppState>>) -> impl IntoRespon
     let slack_trigger_count = state.slack_router.trigger_count();
     let jira_trigger_count = state.jira_router.trigger_count();
     let github_trigger_count = state.github_router.trigger_count();
+    let zoom_trigger_count = state.zoom_router.trigger_count();
     Json(serde_json::json!({
         "status": "healthy",
         "slack_triggers_loaded": slack_trigger_count,
         "jira_triggers_loaded": jira_trigger_count,
-        "github_triggers_loaded": github_trigger_count
+        "github_triggers_loaded": github_trigger_count,
+        "zoom_triggers_loaded": zoom_trigger_count
     }))
 }
 

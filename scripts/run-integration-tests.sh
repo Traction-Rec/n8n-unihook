@@ -21,6 +21,9 @@ TEST_LAST_NAME="User"
 # This must match TEST_SLACK_SIGNING_SECRET in tests/integration/common/mod.rs
 SLACK_SIGNING_SECRET="test-signing-secret-for-integration-tests"
 
+# Zoom webhook secret for integration tests — must match docker-compose.test.yml
+ZOOM_WEBHOOK_SECRET="test-zoom-webhook-secret-for-integration-tests"
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -99,6 +102,35 @@ while [[ $# -gt 0 ]]; do
 done
 
 cd "$PROJECT_DIR"
+
+# Ensure cargo is available (non-interactive shells may not source ~/.cargo/env)
+if [ -f "$HOME/.cargo/env" ]; then
+    # shellcheck disable=SC1091
+    source "$HOME/.cargo/env"
+fi
+
+# Build the custom Zoom trigger node for mounting into the test n8n container
+build_zoom_trigger_node() {
+    local zoom_node_dir="${ZOOM_NODE_DIR:-../n8n-nodes-unihook-zoom-trigger}"
+
+    if [ ! -d "$zoom_node_dir" ]; then
+        log_step "Cloning Zoom trigger node repository..."
+        zoom_node_dir="/tmp/n8n-nodes-unihook-zoom-trigger"
+        rm -rf "$zoom_node_dir"
+        git clone --depth 1 "${ZOOM_NODE_REPO:-https://github.com/Traction-Rec/n8n-nodes-unihook-zoom-trigger.git}" "$zoom_node_dir"
+    fi
+
+    log_step "Building Zoom trigger node in $zoom_node_dir..."
+    if [ -d "$zoom_node_dir/node_modules" ]; then
+        (cd "$zoom_node_dir" && npm run build)
+    else
+        (cd "$zoom_node_dir" && npm ci --legacy-peer-deps && npm run build)
+    fi
+
+    # Mount the package root so n8n resolves dist/nodes/... paths from package.json
+    export ZOOM_NODE_DIR="$(cd "$zoom_node_dir" && pwd)"
+    log_info "Zoom node package: $ZOOM_NODE_DIR"
+}
 
 # Function to wait for n8n to be healthy
 wait_for_n8n() {
@@ -261,7 +293,7 @@ setup_n8n() {
     
     log_info "GitHub API credential created with ID: $GITHUB_CREDENTIAL_ID"
     export GITHUB_CREDENTIAL_ID
-    
+
     # Clean up cookie jar
     rm -f "$cookie_jar"
     
@@ -283,7 +315,9 @@ if [ "$SKIP_DOCKER" != "true" ]; then
     docker rm -f n8n-test n8n-unihook-test 2>/dev/null || true
     # Also clean up legacy containers from before the mock-apis removal
     docker rm -f mock-apis-test mock-jira-test mock-github-test 2>/dev/null || true
-    
+
+    build_zoom_trigger_node
+
     log_step "Starting n8n and n8n-unihook (initial boot with empty API key for mock endpoints)..."
     docker compose -f "$COMPOSE_FILE" -p "$PROJECT_NAME" up -d --build n8n n8n-unihook
 

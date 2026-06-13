@@ -1,6 +1,6 @@
 # Unihook
 
-A lightweight Rust service that enables multiple n8n workflows to share a single inbound webhook for Slack, Jira, and GitHub. It receives all events at one endpoint per service and intelligently routes them to matching n8n workflows based on their trigger configurations.
+A lightweight Rust service that enables multiple n8n workflows to share a single inbound webhook for Slack, Jira, GitHub, and Zoom. It receives all events at one endpoint per service and intelligently routes them to matching n8n workflows based on their trigger configurations.
 
 ## The Problem
 
@@ -9,6 +9,7 @@ n8n's built-in trigger nodes (Slack Trigger, Jira Trigger, GitHub Trigger) creat
 - **Slack**: Create separate Slack apps for each workflow, manage multiple OAuth credentials, and deal with complex app approval processes
 - **Jira**: Register separate webhooks in Jira for each workflow, leading to webhook sprawl and management overhead
 - **GitHub**: Register separate webhooks per repository per workflow, causing webhook sprawl across repositories
+- **Zoom**: Configure a single Event Subscriptions URL per Zoom app, but need many workflows with Zoom Trigger nodes — and account-wide events differ from Slack's bot-scoped visibility
 
 This is administratively unworkable for organizations with multiple event-triggered workflows.
 
@@ -16,7 +17,7 @@ This is administratively unworkable for organizations with multiple event-trigge
 
 Unihook acts as a router between external services and n8n:
 
-1. **Single Webhook**: Register one URL per service (Slack, Jira, GitHub)
+1. **Single Webhook**: Register one URL per service (Slack, Jira, GitHub, Zoom)
 2. **Dynamic Discovery**: Automatically discovers n8n workflows with matching triggers via the n8n API
 3. **Smart Routing**: Forwards events only to workflows whose trigger configuration matches the event
 4. **Zero Execution Waste**: Events that don't match any trigger never reach n8n
@@ -68,6 +69,8 @@ cd n8n-unihook
 ```bash
 # Required
 N8N_API_KEY=your-n8n-api-key
+ZOOM_WEBHOOK_SECRET=your-zoom-secret-token
+ZOOM_ALLOWED_EVENTS=meeting.started,meeting.ended,recording.completed
 
 # Optional (defaults shown)
 N8N_API_URL=http://n8n:5678
@@ -75,7 +78,6 @@ REFRESH_INTERVAL_SECS=60
 RUST_LOG=n8n_slack_unihook=info
 
 # Inbound webhook signature verification (optional but recommended for GitHub)
-# Set this to the shared secret configured in your GitHub webhook settings
 # GITHUB_WEBHOOK_SECRET=your-github-webhook-secret
 ```
 
@@ -104,6 +106,8 @@ docker run -d \
 # Set environment variables
 export N8N_API_KEY=your-n8n-api-key
 export N8N_API_URL=http://localhost:5678
+export ZOOM_WEBHOOK_SECRET=your-zoom-secret-token
+export ZOOM_ALLOWED_EVENTS=meeting.started,meeting.ended,recording.completed
 
 # Build and run
 cargo run
@@ -120,6 +124,8 @@ cargo run
 | `N8N_ENDPOINT_WEBHOOK` | No | `webhook` | n8n production webhook path segment |
 | `N8N_ENDPOINT_WEBHOOK_TEST` | No | `webhook-test` | n8n test webhook path segment |
 | `GITHUB_WEBHOOK_SECRET` | No | - | Shared secret for verifying inbound GitHub webhooks (HMAC-SHA256 via `X-Hub-Signature-256`) |
+| `ZOOM_WEBHOOK_SECRET` | Yes | - | Zoom app Secret Token for URL validation and inbound signature verification |
+| `ZOOM_ALLOWED_EVENTS` | Yes | - | Comma-separated Zoom event types Unihook may forward (platform allowlist) |
 | `RUST_LOG` | No | `n8n_slack_unihook=info` | Log level |
 
 ## Setting Up Slack
@@ -362,6 +368,65 @@ When a GitHub webhook event arrives at `/github/events`:
 | Special | `ping` (handled automatically — acknowledged but not routed) |
 | Wildcard | `*` (matches all events) |
 
+## Setting Up Zoom
+
+Zoom differs from Slack: webhook delivery is **app-level**, not bot-scoped. A privileged admin configuring Event Subscriptions for a shared Zoom app can receive account-wide events. Unihook adds a platform allowlist so sensitive event types are not forwarded even if subscribed in Zoom or matched by a wildcard trigger.
+
+### Prerequisites
+
+- Install the community node [`n8n-nodes-unihook-zoom-trigger`](https://github.com/Traction-Rec/n8n-nodes-unihook-zoom-trigger) in n8n
+- Deploy Unihook with `ZOOM_WEBHOOK_SECRET` and `ZOOM_ALLOWED_EVENTS`
+
+### Steps
+
+1. **Configure Unihook** with your Zoom app Secret Token and an allowlist:
+   ```bash
+   ZOOM_WEBHOOK_SECRET=your-secret-token
+   ZOOM_ALLOWED_EVENTS=meeting.started,meeting.ended,recording.completed
+   ```
+
+2. **Configure your Zoom app** at [marketplace.zoom.us](https://marketplace.zoom.us/):
+   - Enable **Event Subscriptions**
+   - Set the notification URL to: `https://your-domain.com/zoom/events`
+   - Subscribe only to events on your allowlist
+   - Use the narrowest Event notification receiver scope that meets your needs
+
+3. **Create n8n workflows** with Zoom Trigger nodes:
+   - Install `n8n-nodes-unihook-zoom-trigger`
+   - Select event types (or `*` for all allowlisted events)
+   - Add a **Zoom Trigger API** credential with the same Secret Token as `ZOOM_WEBHOOK_SECRET`
+   - Activate the workflow
+
+4. **For workflows that call Zoom APIs**: attach n8n's Zoom OAuth credential to downstream action nodes (separate from the webhook secret)
+
+> **Note:** Like Slack, the Zoom Trigger node does not call the Zoom API during workflow activation — no provider API mock is needed.
+
+### Zoom Routing
+
+Unihook discovers workflows with `n8n-nodes-unihook-zoom-trigger.zoomTrigger` nodes and extracts the `event` parameter (array of event types, or `*`).
+
+When an event arrives:
+
+1. Verify `x-zm-signature` using `ZOOM_WEBHOOK_SECRET`
+2. Drop events not on `ZOOM_ALLOWED_EVENTS` (200 to Zoom, not forwarded)
+3. Match remaining events against trigger configurations
+4. Forward raw body and `x-zm-*` headers to matching n8n webhooks
+
+### Authorization model
+
+| Layer | Controls |
+|-------|----------|
+| Zoom admin subscription | Which events Zoom sends; receiver scope (account vs users who installed app) |
+| Unihook `ZOOM_ALLOWED_EVENTS` | Which event types are forwarded (ingress gate) |
+| Zoom Trigger `event` parameter | Which forwarded events start each workflow |
+| n8n Zoom OAuth on action nodes | What API operations a workflow can perform |
+
+**Why OAuth on the trigger does not replace the allowlist:** Zoom POSTs to the app endpoint regardless of which n8n user owns a workflow. Per-user OAuth in n8n limits API actions after receipt, not webhook delivery. For a shared privileged app, `ZOOM_ALLOWED_EVENTS` is the correct ingress control.
+
+### Wildcard (`*`)
+
+The Zoom Trigger node supports `*` to receive all events that Unihook forwards. Wildcard triggers cannot bypass `ZOOM_ALLOWED_EVENTS`.
+
 ## Inbound Signature Verification
 
 Unihook supports optional HMAC-SHA256 verification of incoming webhook payloads. When enabled, events that fail verification are rejected with `401 Unauthorized` before any routing occurs.
@@ -369,6 +434,7 @@ Unihook supports optional HMAC-SHA256 verification of incoming webhook payloads.
 | Service | Env Var | Header Verified | Signing Standard |
 |---------|---------|----------------|-----------------|
 | GitHub | `GITHUB_WEBHOOK_SECRET` | `X-Hub-Signature-256` | [GitHub webhook security](https://docs.github.com/en/webhooks/using-webhooks/validating-webhook-deliveries) |
+| Zoom | `ZOOM_WEBHOOK_SECRET` | `x-zm-signature`, `x-zm-request-timestamp` | [Zoom webhooks](https://developers.zoom.us/docs/api/webhooks/) — `v0:{timestamp}:{body}` |
 
 **How it works**: GitHub computes `HMAC-SHA256(body, secret)` and sends it as `sha256=<hex_digest>` in the `X-Hub-Signature-256` header. Unihook recomputes the HMAC using the configured env var and compares using constant-time equality.
 
@@ -398,7 +464,8 @@ No additional environment variables are required.
 | `/slack/events` | POST | Receives Slack events (configure in Slack app) |
 | `/jira/events` | POST | Receives Jira webhook events (configure in Jira) |
 | `/github/events` | POST | Receives GitHub webhook events (configure in GitHub) |
-| `/health` | GET | Health check — reports loaded trigger counts |
+| `/zoom/events` | POST | Receives Zoom webhook events (configure in Zoom app Event Subscriptions) |
+| `/health` | GET | Health check — reports loaded trigger counts (`slack_triggers_loaded`, `jira_triggers_loaded`, `github_triggers_loaded`, `zoom_triggers_loaded`) |
 
 ## Reverse Proxy Setup (nginx example)
 
@@ -428,6 +495,15 @@ server {
     }
 
     location /github/events {
+        proxy_pass http://localhost:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location /zoom/events {
         proxy_pass http://localhost:3000;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
@@ -465,7 +541,7 @@ The integration test environment uses Unihook's built-in provider API mock endpo
 ### Events not being forwarded
 
 1. Check the health endpoint: `curl http://localhost:3000/health`
-2. Verify triggers are loaded: The health response shows `slack_triggers_loaded`, `jira_triggers_loaded`, and `github_triggers_loaded` counts
+2. Verify triggers are loaded: The health response shows `slack_triggers_loaded`, `jira_triggers_loaded`, `github_triggers_loaded`, and `zoom_triggers_loaded` counts
 3. Check logs: `docker logs n8n-unihook`
 4. Ensure workflows are **active** in n8n (inactive workflows only receive test webhook events)
 
@@ -494,6 +570,18 @@ The integration test environment uses Unihook's built-in provider API mock endpo
 - Ensure the workflow has been activated at least once (so `staticData` is populated with the webhook secret)
 - Trigger a refresh by restarting Unihook or waiting for the next refresh interval
 - Check logs for `"No webhook secret available"` warnings
+
+### Zoom events not matching
+
+- Verify the top-level `event` field is present in the Zoom payload
+- Check that the workflow's Zoom Trigger node is configured for the correct event types
+- Ensure the event is on Unihook's `ZOOM_ALLOWED_EVENTS` allowlist
+- Use wildcard (`*`) on the trigger to match all allowlisted events during debugging
+
+### Zoom events returning 401
+
+- Verify `ZOOM_WEBHOOK_SECRET` matches the Secret Token in your Zoom app and n8n credentials
+- Ensure `x-zm-signature` and `x-zm-request-timestamp` headers are forwarded if using a reverse proxy
 
 ### n8n API connection issues
 

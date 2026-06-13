@@ -1,6 +1,6 @@
 [package]
 name = "n8n-unihook"
-version = "0.4.2"
+version = "0.5.0"
 edition = "2024"
 description = "A Slack event router for n8n that enables multiple workflows to share a single Slack app webhook"
 license = "MIT"
@@ -42,8 +42,8 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 [dev-dependencies]
 # For integration tests
 tokio-test = "0.4"
-# Reqwest with cookies for test session management
-reqwest = { version = "0.13", features = ["json", "cookies"] }
+# Reqwest for integration test HTTP client (API key auth; no cookie store needed)
+reqwest = { version = "0.13", features = ["json"] }
 # For Slack signature computation in tests
 hmac = "0.12"
 sha2 = "0.10"
